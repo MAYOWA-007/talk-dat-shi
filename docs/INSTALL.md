@@ -1,5 +1,15 @@
 # Installation
 
+## Download From GitHub
+
+1. Open the [GitHub Releases page](https://github.com/MAYOWA-007/talk-dat-shi/releases).
+2. Download one Windows asset:
+   - Recommended: `Talk-Dat-Shi-Setup.exe`
+   - Portable/no installer: `Talk-Dat-Shi-Windows-Portable.zip`
+3. Verify the checksum in `SHA256SUMS.txt` if you want an integrity check.
+
+The release assets do not contain API keys, dictionaries, snippets, private config, or transcript history.
+
 ## Recommended: Windows Installer
 
 1. Download `Talk-Dat-Shi-Setup.exe` from a release.
@@ -12,10 +22,11 @@ The installer does not contain API keys. It installs only the app executable and
 
 ## Portable EXE
 
-1. Download `Talk Dat Shi.exe` from a release.
-2. Put it anywhere you trust, such as `%LOCALAPPDATA%\Programs\Talk Dat Shi`.
-3. Run it.
-4. Complete onboarding.
+1. Download `Talk-Dat-Shi-Windows-Portable.zip`.
+2. Extract it somewhere you trust, such as `%LOCALAPPDATA%\Programs\Talk Dat Shi`.
+3. Open `START-HERE.md`.
+4. Run `Talk Dat Shi.exe`.
+5. Complete onboarding.
 
 Optional startup registration from source:
 
@@ -32,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-startup.ps1
 ## From Source
 
 ```powershell
-git clone https://github.com/YOUR-ORG/talk-dat-shi.git
+git clone https://github.com/MAYOWA-007/talk-dat-shi.git
 cd talk-dat-shi
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
@@ -64,7 +75,15 @@ On a fresh config, Talk Dat Shi opens a setup window where the user chooses:
 - API base
 - API key
 
-The key is saved locally in `%APPDATA%\TalkDatShi\config.json`.
+The setup window also reminds users that the microphone stays off until a trigger is pressed. The key is saved locally in `%APPDATA%\TalkDatShi\config.json`.
+
+Recommended first test:
+
+1. Open Notepad.
+2. Click the pill or hold `Ctrl+Win`.
+3. Speak one sentence.
+4. Click the pill again or release the trigger.
+5. Confirm the cleaned transcript pasted into Notepad.
 
 ## Uninstall
 

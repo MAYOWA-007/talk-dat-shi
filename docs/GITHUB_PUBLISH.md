@@ -1,12 +1,18 @@
 # GitHub Publish Guide
 
-Do this only when you are ready to create the new public repository.
+This repository is published at:
+
+```text
+https://github.com/MAYOWA-007/talk-dat-shi
+```
 
 ## Recommended Ownership
 
 Create a GitHub organization if both a personal and business account need control. Put the repository under that organization and add both accounts as owners/admins.
 
 ## Safe First Push
+
+This section is kept for future forks or new repos. For the current public repo, push normal updates to `main`.
 
 From the project root:
 
@@ -19,7 +25,7 @@ git diff --cached --stat
 git diff --cached
 git commit -m "Prepare public Talk Dat Shi release"
 git branch -M main
-git remote add origin https://github.com/YOUR-ORG/talk-dat-shi.git
+git remote add origin https://github.com/MAYOWA-007/talk-dat-shi.git
 git push -u origin main
 ```
 
@@ -27,10 +33,27 @@ Do not use `git add -A` until you have reviewed ignored files and confirmed no p
 
 ## Release Uploads
 
-Build locally:
+Automated release builds are handled by `.github/workflows/release-windows.yml`.
+
+To create a public release:
+
+```powershell
+python .\scripts\prepublish_check.py
+git status --short
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow creates:
+
+- `Talk-Dat-Shi-Setup.exe`
+- `Talk-Dat-Shi-Windows-Portable.zip`
+- `SHA256SUMS.txt`
+
+For a local manual build:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-Upload `release\Talk-Dat-Shi-Setup.exe` to a GitHub Release. Do not commit `release/`, `dist/`, or `build/`.
+Upload `release\Talk-Dat-Shi-Setup.exe`, a portable ZIP, and checksums to a GitHub Release. Do not commit `release/`, `dist/`, or `build/`.

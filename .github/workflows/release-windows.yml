@@ -1,0 +1,98 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    name: Windows EXE and installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Public safety check
+        shell: powershell
+        run: python .\scripts\prepublish_check.py
+
+      - name: Build portable EXE
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\build-exe.ps1
+
+      - name: Package portable ZIP
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path release\portable | Out-Null
+          Copy-Item "dist\Talk Dat Shi.exe" "release\portable\Talk Dat Shi.exe"
+          Copy-Item "docs\START_HERE_WINDOWS.md" "release\portable\START-HERE.md"
+          Copy-Item "docs\INSTALL.md" "release\portable\INSTALL.md"
+          Copy-Item "docs\PROVIDERS.md" "release\portable\PROVIDERS.md"
+          Compress-Archive -Path "release\portable\*" -DestinationPath "release\Talk-Dat-Shi-Windows-Portable.zip" -Force
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipExeBuild
+
+      - name: Create checksums
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(
+            "release\Talk-Dat-Shi-Windows-Portable.zip",
+            "release\Talk-Dat-Shi-Setup.exe"
+          )
+          $lines = foreach ($file in $files) {
+            if (Test-Path $file) {
+              $hash = Get-FileHash $file -Algorithm SHA256
+              "$($hash.Hash.ToLower())  $(Split-Path -Leaf $file)"
+            }
+          }
+          $lines | Set-Content -Path "release\SHA256SUMS.txt" -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: talk-dat-shi-windows-release
+          path: |
+            release/Talk-Dat-Shi-Windows-Portable.zip
+            release/Talk-Dat-Shi-Setup.exe
+            release/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/Talk-Dat-Shi-Windows-Portable.zip
+            release/Talk-Dat-Shi-Setup.exe
+            release/SHA256SUMS.txt
+          body: |
+            ## Download
+
+            - `Talk-Dat-Shi-Setup.exe` is the recommended Windows installer.
+            - `Talk-Dat-Shi-Windows-Portable.zip` is the no-installer portable build.
+
+            ## First Run
+
+            Launch the app, choose a speech provider, paste your own API key, and save setup. The microphone stays off until you press a trigger or click the pill.
+
+            ## Privacy
+
+            This release does not contain API keys, private config, dictionaries, snippets, or transcript history. User data is stored locally under `%APPDATA%\TalkDatShi`.

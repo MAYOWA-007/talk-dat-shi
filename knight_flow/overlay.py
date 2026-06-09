@@ -2085,7 +2085,16 @@ class Overlay:
             borderwidth=0,
         )
 
-    def _draw_settings_header(self, canvas: tk.Canvas, width: int, height: int, theme: str) -> None:
+    def _draw_settings_header(
+        self,
+        canvas: tk.Canvas,
+        width: int,
+        height: int,
+        theme: str,
+        *,
+        title: str = "Talk Dat Shi",
+        subtitle: str | None = None,
+    ) -> None:
         width = max(320, int(width))
         height = max(72, int(height))
         palette = self._settings_palette(theme)
@@ -2136,7 +2145,7 @@ class Overlay:
         canvas.create_text(
             accent_x + accent_width + 22,
             32,
-            text="Talk Dat Shi",
+            text=title,
             anchor="w",
             fill=palette["text"],
             font=("Segoe UI Semibold", 17),
@@ -2144,7 +2153,7 @@ class Overlay:
         canvas.create_text(
             accent_x + accent_width + 22,
             58,
-            text=f"Settings - {palette['name']} - local private config",
+            text=subtitle or f"Settings - {palette['name']} - local private config",
             anchor="w",
             fill=palette["muted"],
             font=("Segoe UI", 10),
@@ -2172,7 +2181,7 @@ class Overlay:
         ui = self.config.setdefault("ui", {})
         theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
-        window = self._utility_window("onboarding", "Talk Dat Shi Setup", "820x610", bg=palette["bg"])
+        window = self._utility_window("onboarding", "Talk Dat Shi Setup", "860x690", bg=palette["bg"])
         if window is None:
             return
         window.configure(bg=palette["bg"])
@@ -2186,44 +2195,14 @@ class Overlay:
 
         def redraw_header(_event: tk.Event | None = None) -> None:
             width = max(1, header.winfo_width())
-            field = self._compact_wave_frame(width, 136, active=True) or self._compact_reference_fallback(width, 136)
-            if field.mode != "RGBA":
-                field = field.convert("RGBA")
-            veil = Image.new("RGBA", field.size, (4, 13, 16, 132))
-            field = Image.alpha_composite(field, veil)
-            draw = ImageDraw.Draw(field)
-            draw.rounded_rectangle((8, 8, width - 9, 126), radius=28, outline=(57, 245, 204, 90), width=1)
-            draw.rounded_rectangle((14, 14, width - 15, 54), radius=18, fill=(255, 237, 177, 20))
-            self.settings_header_photo = ImageTk.PhotoImage(field.convert("RGB"))
-            header.delete("all")
-            header.create_image(0, 0, image=self.settings_header_photo, anchor="nw")
-            header.create_text(
-                24,
-                36,
-                text="Talk Dat Shi",
-                anchor="w",
-                fill=palette["text"],
-                font=("Segoe UI Semibold", 20),
+            self._draw_settings_header(
+                header,
+                width,
+                136,
+                theme,
+                title="Talk Dat Shi Setup",
+                subtitle="Choose a speech provider, paste your own key, then trigger only when you want to talk.",
             )
-            header.create_text(
-                24,
-                70,
-                text="Bring your own speech model key. Nothing is uploaded until you press a trigger.",
-                anchor="w",
-                fill=palette["muted"],
-                font=("Segoe UI", 10),
-            )
-            header.create_text(
-                24,
-                99,
-                text="Your key is saved only in your Windows AppData config.",
-                anchor="w",
-                fill="#f6dea0",
-                font=("Segoe UI Semibold", 10),
-            )
-            close_left = width - 55
-            header.create_oval(close_left, 24, close_left + 28, 52, outline="#f7d99a", width=1, fill="#142629")
-            header.create_text(close_left + 14, 38, text="X", fill="#f7d99a", font=("Segoe UI Semibold", 9))
 
         def header_click(event: tk.Event) -> str | None:
             if int(getattr(event, "x", 0)) >= max(0, header.winfo_width() - 62) and int(getattr(event, "y", 0)) <= 62:
@@ -2238,6 +2217,12 @@ class Overlay:
         panel = ttk.Frame(window, padding=18, style="Flow.TFrame")
         panel.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
         panel.columnconfigure(1, weight=1)
+        ttk.Label(
+            panel,
+            text="1. Pick a wired provider. 2. Paste your own key. 3. Save setup. The microphone stays off until a trigger is pressed.",
+            wraplength=720,
+            style="Flow.Muted.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
 
         def add_row(row: int, label: str, widget: tk.Widget) -> None:
             ttk.Label(panel, text=label, style="Flow.TLabel").grid(row=row, column=0, sticky="w", pady=7, padx=(0, 14))
@@ -2317,23 +2302,35 @@ class Overlay:
         provider_box.bind("<<ComboboxSelected>>", on_provider_change)
         model_box.bind("<<ComboboxSelected>>", on_model_change)
 
-        add_row(0, "Provider", provider_box)
-        add_row(1, "Model", model_box)
-        add_row(2, "Mode / trim", variant_box)
-        add_row(3, "Language", entry(language_var, 18))
-        add_row(4, "API base", entry(base_var, 64))
-        add_row(5, "API key", key_entry)
-        ttk.Label(panel, textvariable=key_label_var, style="Flow.Muted.TLabel").grid(row=6, column=1, sticky="w")
-        ttk.Label(panel, textvariable=capability_var, style="Flow.Muted.TLabel").grid(row=7, column=1, sticky="w", pady=(6, 0))
+        add_row(1, "Provider", provider_box)
+        add_row(2, "Model", model_box)
+        add_row(3, "Mode / trim", variant_box)
+        add_row(4, "Language", entry(language_var, 18))
+        add_row(5, "API base", entry(base_var, 64))
+        add_row(6, "API key", key_entry)
+        ttk.Label(panel, textvariable=key_label_var, style="Flow.Muted.TLabel").grid(row=7, column=1, sticky="w")
+        ttk.Label(panel, textvariable=capability_var, style="Flow.Muted.TLabel").grid(row=8, column=1, sticky="w", pady=(6, 0))
         ttk.Label(panel, textvariable=docs_var, wraplength=580, style="Flow.Muted.TLabel").grid(
-            row=8, column=1, sticky="ew", pady=(4, 14)
+            row=9, column=1, sticky="ew", pady=(4, 8)
         )
         ttk.Label(
             panel,
-            text="Wired today: Deepgram streaming, OpenAI-compatible batch, ElevenLabs, AssemblyAI, and Gemini. Other brands are listed for roadmap/config planning and show adapter-pending status.",
+            text=f"Private local config: {config_path()}",
             wraplength=720,
             style="Flow.Muted.TLabel",
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        ttk.Label(
+            panel,
+            text="Recommended first test: open Notepad, click the pill or hold Ctrl+Win, speak one sentence, then stop.",
+            wraplength=720,
+            style="Flow.Muted.TLabel",
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(
+            panel,
+            text="Wired today: Deepgram streaming, OpenAI-compatible batch, ElevenLabs, AssemblyAI, and Gemini. Other brands show adapter-pending status in full settings.",
+            wraplength=720,
+            style="Flow.Muted.TLabel",
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         button_row = tk.Frame(window, bg=palette["bg"])
         button_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))

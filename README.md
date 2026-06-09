@@ -24,9 +24,14 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 
 ## Install
 
-Download the installer from a GitHub Release when one is published, then launch Talk Dat Shi. First-run onboarding will ask for your provider key and model.
+Go to [Releases](https://github.com/MAYOWA-007/talk-dat-shi/releases) and download one Windows asset:
 
-For a no-installer portable run, download `Talk Dat Shi.exe` from a release and run it directly. Startup registration is optional.
+- Recommended: `Talk-Dat-Shi-Setup.exe`
+- Portable/no installer: `Talk-Dat-Shi-Windows-Portable.zip`
+
+Launch Talk Dat Shi, complete setup with your own provider key, then test in Notepad. The microphone stays off until you click the pill or press a trigger.
+
+The portable ZIP includes `START-HERE.md`, `INSTALL.md`, and `PROVIDERS.md`.
 
 ## Run From Source
 
@@ -38,7 +43,7 @@ Requirements:
 - Your own speech-to-text provider key
 
 ```powershell
-git clone https://github.com/YOUR-ORG/talk-dat-shi.git
+git clone https://github.com/MAYOWA-007/talk-dat-shi.git
 cd talk-dat-shi
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
@@ -84,6 +89,8 @@ See [docs/PROVIDERS.md](docs/PROVIDERS.md). Current wired adapters include:
 Other providers appear in the settings framework for planning and configuration, but still need dedicated adapters before they can transcribe inside the app.
 
 ## Public Repo Safety
+
+Release assets are built by `.github/workflows/release-windows.yml` when a tag like `v0.1.0` is pushed, or manually from GitHub Actions.
 
 Before publishing or tagging a release:
 

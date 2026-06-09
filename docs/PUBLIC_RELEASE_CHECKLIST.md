@@ -42,6 +42,30 @@ git diff --staged
 
 ## Release Build
 
+### Automated GitHub Release
+
+1. Run the prepublish check locally.
+2. Commit all release-ready source changes.
+3. Push `main`.
+4. Create and push a version tag:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+5. Confirm GitHub Actions ran `Build Windows Release`.
+6. Confirm the GitHub Release has:
+   - `Talk-Dat-Shi-Setup.exe`
+   - `Talk-Dat-Shi-Windows-Portable.zip`
+   - `SHA256SUMS.txt`
+7. Download the release from GitHub on a clean machine or temp folder.
+8. Confirm onboarding appears on a fresh config with no API key.
+9. Confirm Status shows the app idle and `session_active: False`.
+10. Confirm dictation only starts after a trigger or pill click.
+
+### Local Release Build
+
 1. Run the prepublish check.
 2. Build the EXE:
 
@@ -58,8 +82,13 @@ powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 4. Launch the built EXE locally.
 5. Confirm Status shows the app idle and `session_active: False`.
 6. Confirm onboarding appears on a fresh config with no API key.
-7. Attach `release\Talk-Dat-Shi-Setup.exe` to the GitHub release.
-8. Include a checksum in the release notes.
+7. Create a portable ZIP containing:
+   - `dist\Talk Dat Shi.exe`
+   - `docs\START_HERE_WINDOWS.md`
+   - `docs\INSTALL.md`
+   - `docs\PROVIDERS.md`
+8. Attach `release\Talk-Dat-Shi-Setup.exe`, the portable ZIP, and `SHA256SUMS.txt` to the GitHub release.
+9. Include first-run, privacy, and checksum notes in the release notes.
 
 ## Safety Notes
 
