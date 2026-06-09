@@ -14,6 +14,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Command/edit mode with `Ctrl+Win+Alt`.
 - Panic stop with `Ctrl+Win+Esc`.
 - Animated bottom overlay that is idle until activated.
+- Soft hover glow with a delayed translucent fade when the pill is covering screen content.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
 - Right-click overlay menu for Settings and History.
 - Local transcript history and live draft files.

@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageTk
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
 from .config import config_path, full_history_path, history_path, live_draft_path, scratchpad_path
 from .icon import ensure_icon_file
@@ -76,6 +76,9 @@ class Overlay:
         self.fixed_position = bool(overlay_config.get("fixed_position", True))
         self.no_activate = bool(overlay_config.get("no_activate", True))
         self.opacity = float(overlay_config.get("opacity", 0.94))
+        self.hover_fade_delay_ms = int(overlay_config.get("hover_fade_delay_ms", 2000))
+        self.hover_fade_opacity = float(overlay_config.get("hover_fade_opacity", 0.38))
+        self.current_alpha = self.opacity
 
         self.root = tk.Tk()
         self.root.title("Talk Dat Shi")
@@ -97,7 +100,9 @@ class Overlay:
         self.level = 0.0
         self.display_level = 0.0
         self.hover_level = 0.0
+        self.hover_translucent_level = 0.0
         self.hovered = False
+        self.hover_started_at: float | None = None
         self.phase = 0
         self.started_at = time.perf_counter()
         self.drag_origin: tuple[int, int] | None = None
@@ -125,6 +130,7 @@ class Overlay:
         self.active_photo_cache: dict[tuple[int, ...], ImageTk.PhotoImage] = {}
         self.idle_render_cache: dict[tuple[int, ...], Image.Image] = {}
         self.idle_photo_cache: dict[tuple[int, ...], ImageTk.PhotoImage] = {}
+        self.hover_halo_cache: dict[tuple[int, int, int, int], Image.Image] = {}
         self.last_flow_render_key: tuple[int, int] | None = None
         self.last_animation_tick = time.perf_counter()
         self.utility_drag_origin: tuple[int, int, int, int] | None = None
@@ -312,17 +318,17 @@ class Overlay:
         self.fixed_position = bool(overlay_config.get("fixed_position", self.fixed_position))
         self.no_activate = bool(overlay_config.get("no_activate", self.no_activate))
         self.opacity = float(overlay_config.get("opacity", self.opacity))
+        self.hover_fade_delay_ms = int(overlay_config.get("hover_fade_delay_ms", self.hover_fade_delay_ms))
+        self.hover_fade_opacity = float(overlay_config.get("hover_fade_opacity", self.hover_fade_opacity))
         self.wave_loop_start = int(overlay_config.get("wave_loop_start", self.wave_loop_start))
         self.wave_loop_end = int(overlay_config.get("wave_loop_end", self.wave_loop_end))
         self.idle_render_cache.clear()
         self.idle_photo_cache.clear()
         self.active_render_cache.clear()
         self.active_photo_cache.clear()
+        self.hover_halo_cache.clear()
         self.flow_single_frame_cache.clear()
-        try:
-            self.root.attributes("-alpha", self.opacity)
-        except Exception:
-            pass
+        self._apply_root_alpha(self.opacity, force=True)
         self._set_compact(self.state == "idle", animate=True)
         self.root.after(320, self._warm_visual_caches)
 
@@ -521,7 +527,7 @@ class Overlay:
         self.root.after(0, self.root.withdraw)
 
     def _on_enter(self, _event: tk.Event | None = None) -> None:
-        self.hovered = True
+        self._set_hovered(True)
 
     def _on_leave(self, _event: tk.Event | None = None) -> None:
         self.root.after(60, self._refresh_hover)
@@ -532,9 +538,15 @@ class Overlay:
             pointer_y = self.root.winfo_pointery()
             x = self.root.winfo_rootx()
             y = self.root.winfo_rooty()
-            self.hovered = x <= pointer_x <= x + self.current_width and y <= pointer_y <= y + self.current_height
+            self._set_hovered(x <= pointer_x <= x + self.current_width and y <= pointer_y <= y + self.current_height)
         except Exception:
-            self.hovered = False
+            self._set_hovered(False)
+
+    def _set_hovered(self, hovered: bool) -> None:
+        if hovered == self.hovered:
+            return
+        self.hovered = hovered
+        self.hover_started_at = time.perf_counter() if hovered else None
 
     def _start_drag(self, event: tk.Event) -> None:
         self.pill_click_origin = (int(event.x_root), int(event.y_root))
@@ -633,11 +645,29 @@ class Overlay:
         target_level = self.level if live else 0.0
         self.display_level += (target_level - self.display_level) * (0.18 if live else 0.08)
         self.hover_level += ((1.0 if self.hovered else 0.0) - self.hover_level) * 0.16
+        now = time.perf_counter()
+        hover_age_ms = 0.0
+        if self.hovered and self.hover_started_at is not None:
+            hover_age_ms = max(0.0, (now - self.hover_started_at) * 1000.0)
+        long_hover = 1.0 if hover_age_ms >= max(0, self.hover_fade_delay_ms) else 0.0
+        self.hover_translucent_level += (long_hover - self.hover_translucent_level) * (0.10 if long_hover else 0.18)
+        target_alpha = self.opacity + (self.hover_fade_opacity - self.opacity) * self.hover_translucent_level
+        self._apply_root_alpha(target_alpha)
         self._draw_visual()
         delay = self.active_frame_ms if live else self.idle_frame_ms
         elapsed_ms = int((time.perf_counter() - tick_start) * 1000)
         self.last_animation_tick = tick_start
         self.root.after(max(4, int(delay) - elapsed_ms), self._animate)
+
+    def _apply_root_alpha(self, alpha: float, *, force: bool = False) -> None:
+        alpha = self._clamp(float(alpha), 0.18, 1.0)
+        if not force and abs(alpha - self.current_alpha) < 0.006:
+            return
+        self.current_alpha = alpha
+        try:
+            self.root.attributes("-alpha", alpha)
+        except Exception:
+            pass
 
     def _draw_visual(self) -> None:
         width = max(1, int(self.current_width))
@@ -1072,8 +1102,82 @@ class Overlay:
 
         mask = self._compact_mask(width, height)
         keyed = Image.new("RGBA", (width, height), (*self._rgb(TRANSPARENT_COLOR), 255))
+        hover_halo = self._hover_halo(width, height, active=active)
+        if hover_halo is not None:
+            keyed = Image.alpha_composite(keyed, hover_halo)
         keyed.paste(field, (0, 0), mask)
         return keyed.convert("RGB")
+
+    def _hover_halo(self, width: int, height: int, *, active: bool = False) -> Image.Image | None:
+        hover = self._clamp(self.hover_level, 0.0, 1.0)
+        if hover <= 0.01:
+            return None
+
+        bucket = int(round(hover * 12))
+        phase_bucket = int((self.phase // (2 if active else 3)) % 120)
+        key = (width, height, bucket, phase_bucket)
+        cached = self.hover_halo_cache.get(key)
+        if cached is not None:
+            return cached
+
+        scale = 2
+        scaled_w = max(2, width * scale)
+        scaled_h = max(2, height * scale)
+        key_rgb = self._rgb(TRANSPARENT_COLOR)
+        halo = Image.new("RGBA", (scaled_w, scaled_h), (*key_rgb, 255))
+
+        mask = Image.new("L", (scaled_w, scaled_h), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        pad = max(1, int(1.3 * scale))
+        mask_draw.rounded_rectangle(
+            (pad, pad, scaled_w - pad - 1, scaled_h - pad - 1),
+            radius=max(1, scaled_h // 2 - pad),
+            fill=255,
+        )
+        blur_radius = max(5.0, scaled_h * (0.24 if active else 0.20))
+        glow_mask = mask.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        inner_cut = mask.filter(ImageFilter.GaussianBlur(radius=max(1.5, scaled_h * 0.04)))
+        glow_mask = ImageChops.subtract(glow_mask, inner_cut.point(lambda value: int(value * 0.42)))
+        glow_mask = glow_mask.point(lambda value: int(value * hover * (0.78 if active else 0.62)))
+
+        colors = [
+            (255, 70, 104),
+            (255, 215, 107),
+            (32, 230, 190),
+            (82, 150, 255),
+            (219, 93, 255),
+        ]
+        gradient = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        gradient_draw = ImageDraw.Draw(gradient)
+        phase = (self.phase / (72.0 if active else 115.0)) % 1.0
+        for x_index in range(scaled_w):
+            t = (x_index / max(1, scaled_w - 1) + phase) % 1.0
+            segment = t * len(colors)
+            left_index = int(math.floor(segment)) % len(colors)
+            right_index = (left_index + 1) % len(colors)
+            amount = self._smoothstep(0.0, 1.0, segment - math.floor(segment))
+            color = self._mix_rgb(colors[left_index], colors[right_index], amount)
+            gradient_draw.line((x_index, 0, x_index, scaled_h), fill=(*color, 255))
+
+        glow = Image.new("RGBA", (scaled_w, scaled_h), (*key_rgb, 255))
+        glow.paste(gradient, (0, 0), glow_mask)
+        shimmer = Image.new("L", (scaled_w, scaled_h), 0)
+        shimmer_draw = ImageDraw.Draw(shimmer)
+        sweep_x = int(((self.phase * (2.4 if active else 1.2)) % (scaled_w + scaled_h)) - scaled_h)
+        shimmer_draw.rounded_rectangle(
+            (sweep_x, int(scaled_h * 0.18), sweep_x + int(scaled_w * 0.34), int(scaled_h * 0.82)),
+            radius=max(1, scaled_h // 3),
+            fill=int(58 * hover),
+        )
+        shimmer = shimmer.filter(ImageFilter.GaussianBlur(radius=max(4.0, scaled_h * 0.15)))
+        glow.paste(Image.new("RGBA", (scaled_w, scaled_h), (255, 247, 198, 255)), (0, 0), shimmer)
+
+        if glow.size != (width, height):
+            glow = glow.resize((width, height), Image.Resampling.LANCZOS)
+        if len(self.hover_halo_cache) > 160:
+            self.hover_halo_cache.clear()
+        self.hover_halo_cache[key] = glow
+        return glow
 
     def _compose_active_visual(
         self,
@@ -2471,6 +2575,8 @@ class Overlay:
 
         show_start_var = tk.BooleanVar(value=bool(overlay_config.get("show_on_start", True)))
         opacity_var = string_var(overlay_config.get("opacity", 0.94))
+        hover_fade_delay_var = string_var(overlay_config.get("hover_fade_delay_ms", 2000))
+        hover_fade_opacity_var = string_var(overlay_config.get("hover_fade_opacity", 0.38))
         active_pill_w_var = string_var(overlay_config.get("active_pill_width", 320))
         active_pill_h_var = string_var(overlay_config.get("active_pill_height", 58))
         active_w_var = string_var(overlay_config.get("active_width", 320))
@@ -2491,25 +2597,27 @@ class Overlay:
         no_activate_var = tk.BooleanVar(value=bool(overlay_config.get("no_activate", True)))
 
         add_row(overlay_tab, 0, "Opacity", entry(overlay_tab, opacity_var, 12))
-        add_row(overlay_tab, 1, "Active pill width", entry(overlay_tab, active_pill_w_var, 12))
-        add_row(overlay_tab, 2, "Active pill height", entry(overlay_tab, active_pill_h_var, 12))
-        add_row(overlay_tab, 3, "Active window width", entry(overlay_tab, active_w_var, 12))
-        add_row(overlay_tab, 4, "Active window height", entry(overlay_tab, active_h_var, 12))
-        add_row(overlay_tab, 5, "Resting width", entry(overlay_tab, compact_w_var, 12))
-        add_row(overlay_tab, 6, "Resting height", entry(overlay_tab, compact_h_var, 12))
-        add_row(overlay_tab, 7, "Bottom margin", entry(overlay_tab, bottom_margin_var, 12))
-        add_row(overlay_tab, 8, "Active frame ms", entry(overlay_tab, active_frame_var, 12))
-        add_row(overlay_tab, 9, "Idle frame ms", entry(overlay_tab, idle_frame_var, 12))
-        add_row(overlay_tab, 10, "Resize frame ms", entry(overlay_tab, resize_frame_var, 12))
-        add_row(overlay_tab, 11, "Active loop seconds", entry(overlay_tab, active_loop_var, 12))
-        add_row(overlay_tab, 12, "Idle loop seconds", entry(overlay_tab, idle_loop_var, 12))
-        add_row(overlay_tab, 13, "Result hold ms", entry(overlay_tab, result_hold_var, 12))
-        add_row(overlay_tab, 14, "Error hold ms", entry(overlay_tab, error_hold_var, 12))
-        add_row(overlay_tab, 15, "Wave loop start", entry(overlay_tab, wave_start_var, 12))
-        add_row(overlay_tab, 16, "Wave loop end", entry(overlay_tab, wave_end_var, 12))
-        check(overlay_tab, "Show overlay on start", show_start_var, 17)
-        check(overlay_tab, "Always same bottom position", fixed_var, 18)
-        check(overlay_tab, "Do not steal focus", no_activate_var, 19)
+        add_row(overlay_tab, 1, "Hover fade delay ms", entry(overlay_tab, hover_fade_delay_var, 12))
+        add_row(overlay_tab, 2, "Hover fade opacity", entry(overlay_tab, hover_fade_opacity_var, 12))
+        add_row(overlay_tab, 3, "Active pill width", entry(overlay_tab, active_pill_w_var, 12))
+        add_row(overlay_tab, 4, "Active pill height", entry(overlay_tab, active_pill_h_var, 12))
+        add_row(overlay_tab, 5, "Active window width", entry(overlay_tab, active_w_var, 12))
+        add_row(overlay_tab, 6, "Active window height", entry(overlay_tab, active_h_var, 12))
+        add_row(overlay_tab, 7, "Resting width", entry(overlay_tab, compact_w_var, 12))
+        add_row(overlay_tab, 8, "Resting height", entry(overlay_tab, compact_h_var, 12))
+        add_row(overlay_tab, 9, "Bottom margin", entry(overlay_tab, bottom_margin_var, 12))
+        add_row(overlay_tab, 10, "Active frame ms", entry(overlay_tab, active_frame_var, 12))
+        add_row(overlay_tab, 11, "Idle frame ms", entry(overlay_tab, idle_frame_var, 12))
+        add_row(overlay_tab, 12, "Resize frame ms", entry(overlay_tab, resize_frame_var, 12))
+        add_row(overlay_tab, 13, "Active loop seconds", entry(overlay_tab, active_loop_var, 12))
+        add_row(overlay_tab, 14, "Idle loop seconds", entry(overlay_tab, idle_loop_var, 12))
+        add_row(overlay_tab, 15, "Result hold ms", entry(overlay_tab, result_hold_var, 12))
+        add_row(overlay_tab, 16, "Error hold ms", entry(overlay_tab, error_hold_var, 12))
+        add_row(overlay_tab, 17, "Wave loop start", entry(overlay_tab, wave_start_var, 12))
+        add_row(overlay_tab, 18, "Wave loop end", entry(overlay_tab, wave_end_var, 12))
+        check(overlay_tab, "Show overlay on start", show_start_var, 19)
+        check(overlay_tab, "Always same bottom position", fixed_var, 20)
+        check(overlay_tab, "Do not steal focus", no_activate_var, 21)
 
         hotkey_entries: dict[str, tk.StringVar] = {}
         hotkey_labels = [
@@ -2700,6 +2808,8 @@ class Overlay:
 
             overlay_config["show_on_start"] = bool(show_start_var.get())
             overlay_config["opacity"] = parse_float(opacity_var, 0.94, 0.20, 1.00)
+            overlay_config["hover_fade_delay_ms"] = parse_int(hover_fade_delay_var, 2000, 0, 10000)
+            overlay_config["hover_fade_opacity"] = parse_float(hover_fade_opacity_var, 0.38, 0.18, 1.00)
             overlay_config["active_pill_width"] = parse_int(active_pill_w_var, 320, 120, 1200)
             overlay_config["active_pill_height"] = parse_int(active_pill_h_var, 58, 28, 260)
             overlay_config["active_width"] = parse_int(active_w_var, 320, 120, 1400)

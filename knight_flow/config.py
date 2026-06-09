@@ -104,6 +104,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "overlay": {
         "show_on_start": True,
         "opacity": 0.94,
+        "hover_fade_delay_ms": 2000,
+        "hover_fade_opacity": 0.38,
         "width": 320,
         "height": 58,
         "active_pill_width": 320,
