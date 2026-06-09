@@ -101,6 +101,8 @@ class Overlay:
         self.phase = 0
         self.started_at = time.perf_counter()
         self.drag_origin: tuple[int, int] | None = None
+        self.pill_click_origin: tuple[int, int] | None = None
+        self.pill_click_dragged = False
         self.compact = True
         self.last_status = "Mic off. Hold Ctrl+Win to record."
         self.last_preview = ""
@@ -535,12 +537,19 @@ class Overlay:
             self.hovered = False
 
     def _start_drag(self, event: tk.Event) -> None:
+        self.pill_click_origin = (int(event.x_root), int(event.y_root))
+        self.pill_click_dragged = False
         if self.fixed_position:
             self._position()
             return
         self.drag_origin = (event.x, event.y)
 
     def _drag(self, event: tk.Event) -> None:
+        if self.pill_click_origin:
+            dx = abs(int(event.x_root) - self.pill_click_origin[0])
+            dy = abs(int(event.y_root) - self.pill_click_origin[1])
+            if dx > 6 or dy > 6:
+                self.pill_click_dragged = True
         if self.fixed_position:
             return
         if self.drag_origin is None:
@@ -552,9 +561,23 @@ class Overlay:
         self.root.geometry(f"+{x}+{y}")
 
     def _end_drag(self, event: tk.Event) -> None:
+        should_toggle = False
+        if self.pill_click_origin:
+            dx = abs(int(event.x_root) - self.pill_click_origin[0])
+            dy = abs(int(event.y_root) - self.pill_click_origin[1])
+            should_toggle = not self.pill_click_dragged and dx <= 6 and dy <= 6
+        self.pill_click_origin = None
+        self.pill_click_dragged = False
         self.drag_origin = None
         if self.fixed_position:
             self._position()
+        if should_toggle:
+            self._toggle_from_pill_click()
+
+    def _toggle_from_pill_click(self) -> None:
+        callback = self.callbacks.get("hands_free")
+        if callback:
+            callback()
 
     def set_state(self, state: str, message: str | None = None, preview: str | None = None) -> None:
         self.root.after(0, lambda: self._set_state_now(state, message, preview))

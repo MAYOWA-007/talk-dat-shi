@@ -109,10 +109,14 @@ class TalkDatShiApp:
 
     def start_push_to_talk(self) -> None:
         log.info("push_to_talk start")
+        if self.stop_hands_free_if_active("push_to_talk"):
+            return
         self.start_session("dictation", "Hold mode: release to stop.", control="hold")
 
     def start_command_mode(self) -> None:
         log.info("command_mode start")
+        if self.stop_hands_free_if_active("command_mode"):
+            return
         self.start_session("command", "Command: release keys to stop.", control="command_hold")
 
     def toggle_hands_free(self) -> None:
@@ -123,6 +127,15 @@ class TalkDatShiApp:
         else:
             log.info("hands_free start")
             self.start_session("dictation", "Hands-free: toggle to stop.", control="hands_free")
+
+    def stop_hands_free_if_active(self, source: str) -> bool:
+        with self.lock:
+            should_stop = self.session is not None and self.session_control == "hands_free"
+        if not should_stop:
+            return False
+        log.info("%s requested while hands_free active; stopping session", source)
+        self.stop_session()
+        return True
 
     def start_session(self, mode: str, message: str, *, control: str = "hold") -> None:
         with self.lock:

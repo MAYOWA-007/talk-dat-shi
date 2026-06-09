@@ -10,6 +10,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 
 - Push-to-talk dictation with `Ctrl+Win`.
 - Hands-free toggle with `Ctrl+Win+Space`.
+- Pill click toggles hands-free on/off; pressing a trigger combo ends a pill-click session.
 - Command/edit mode with `Ctrl+Win+Alt`.
 - Panic stop with `Ctrl+Win+Esc`.
 - Animated bottom overlay that is idle until activated.
