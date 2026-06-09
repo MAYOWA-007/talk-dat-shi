@@ -1299,6 +1299,9 @@ class Overlay:
         value = color.lstrip("#")
         return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
+    def _hex_rgba(self, color: str, alpha: int) -> tuple[int, int, int, int]:
+        return (*self._rgb(color), int(self._clamp(alpha, 0, 255)))
+
     def _open_context_menu_from_event(self, event: tk.Event | None = None) -> str:
         x = int(getattr(event, "x_root", self.root.winfo_rootx() + self.current_width // 2))
         y = int(getattr(event, "y_root", self.root.winfo_rooty()))
@@ -1307,8 +1310,8 @@ class Overlay:
 
     def _open_context_menu(self, x_root: int, y_root: int) -> None:
         self._close_context_menu()
-        width = 260
-        height = 126
+        width = 292
+        height = 146
         window = tk.Toplevel(self.root)
         window.overrideredirect(True)
         window.attributes("-topmost", True)
@@ -1339,7 +1342,7 @@ class Overlay:
         canvas.bind("<Button-3>", lambda _event: self._close_context_menu())
 
         window.update_idletasks()
-        self._apply_window_region(window, width, height, 22)
+        self._apply_window_region(window, width, height, 26)
         self._draw_context_menu()
         window.after(30, window.focus_force)
         self._animate_context_menu()
@@ -1392,9 +1395,9 @@ class Overlay:
         return "break"
 
     def _context_menu_action_at(self, y: int) -> str:
-        if 14 <= y <= 60:
+        if 20 <= y <= 68:
             return "settings"
-        if 68 <= y <= 112:
+        if 76 <= y <= 124:
             return "history"
         return ""
 
@@ -1422,76 +1425,97 @@ class Overlay:
         canvas.create_image(0, 0, image=self.context_menu_photo, anchor="nw")
         settings_active = self.context_menu_hover == "settings"
         history_active = self.context_menu_hover == "history"
-        self._draw_gear_icon(canvas, 36, 38, settings_active)
-        self._draw_history_icon(canvas, 36, 90, history_active)
+        palette = self._settings_palette(self._settings_theme_key())
+        self._draw_gear_icon(canvas, 42, 44, settings_active)
+        self._draw_history_icon(canvas, 42, 100, history_active)
         canvas.create_text(
-            62,
-            31,
+            72,
+            37,
             text="Settings",
             anchor="w",
-            fill="#fff4d0" if settings_active else "#edf7f3",
+            fill=palette["warm"] if settings_active else palette["text"],
             font=("Segoe UI Semibold", 11),
         )
         canvas.create_text(
-            62,
-            47,
-            text="All controls",
+            72,
+            53,
+            text="Controls, providers, themes",
             anchor="w",
-            fill="#b7cbc7" if settings_active else "#7f9693",
+            fill=palette["muted"],
             font=("Segoe UI", 8),
         )
         canvas.create_text(
-            62,
-            83,
+            72,
+            93,
             text="History",
             anchor="w",
-            fill="#fff4d0" if history_active else "#edf7f3",
+            fill=palette["warm"] if history_active else palette["text"],
             font=("Segoe UI Semibold", 11),
         )
         canvas.create_text(
-            62,
-            99,
-            text="Full text archive",
+            72,
+            109,
+            text="Private local transcript archive",
             anchor="w",
-            fill="#b7cbc7" if history_active else "#7f9693",
+            fill=palette["muted"],
             font=("Segoe UI", 8),
         )
 
     def _context_menu_background(self, width: int, height: int, hover: str) -> Image.Image:
         key_rgb = self._rgb(TRANSPARENT_COLOR)
+        palette = self._settings_palette(self._settings_theme_key())
+        light = palette["mode"] == "light"
         field = self._compact_wave_frame(width, height, active=True) or self._compact_reference_fallback(width, height)
         if field.mode != "RGBA":
             field = field.convert("RGBA")
         field = ImageEnhance.Color(field).enhance(1.25)
         field = ImageEnhance.Contrast(field).enhance(1.08)
-        field = field.filter(ImageFilter.GaussianBlur(radius=1.0))
+        field = field.filter(ImageFilter.GaussianBlur(radius=1.4))
 
         panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         mask = Image.new("L", (width, height), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=22, fill=255)
+        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=26, fill=255)
         panel.paste(field, (0, 0), mask)
 
-        veil = Image.new("RGBA", (width, height), (3, 15, 18, 174))
+        veil_color = (248, 252, 248, 178) if light else (3, 13, 16, 194)
+        veil = Image.new("RGBA", (width, height), veil_color)
         panel = Image.alpha_composite(panel, veil)
         draw = ImageDraw.Draw(panel)
         pulse = 0.5 + 0.5 * math.sin(self.phase / 12.0)
-        for name, top in (("settings", 13), ("history", 67)):
+        side_mask = Image.new("L", (width, height), 0)
+        side_draw = ImageDraw.Draw(side_mask)
+        side_draw.rounded_rectangle((0, 0, 104, height - 1), radius=26, fill=112)
+        side_texture = field.crop((0, 0, min(field.width, width), min(field.height, height)))
+        panel.paste(side_texture, (0, 0), side_mask)
+
+        for name, top in (("settings", 18), ("history", 74)):
             active = hover == name
-            fill = (255, 215, 124, int(28 + pulse * 12)) if active else (255, 255, 255, 8)
-            outline = (47, 255, 210, int(80 + pulse * 40)) if active else (255, 226, 148, 28)
-            draw.rounded_rectangle((10, top, width - 10, top + 47), radius=17, fill=fill, outline=outline, width=1)
+            fill = (255, 255, 255, 232 if light else 18) if active else ((255, 255, 255, 210) if light else (6, 14, 16, 228))
+            outline = self._hex_rgba(palette["accent"], int(100 + pulse * 35)) if active else self._hex_rgba(palette["stroke"], 96)
+            draw.rounded_rectangle((14, top, width - 14, top + 48), radius=18, fill=fill, outline=outline, width=1)
+            if active:
+                glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                glow_draw = ImageDraw.Draw(glow)
+                glow_draw.rounded_rectangle(
+                    (11, top - 2, width - 11, top + 50),
+                    radius=20,
+                    outline=self._hex_rgba(palette["warm"], 110),
+                    width=2,
+                )
+                panel = Image.alpha_composite(panel, glow.filter(ImageFilter.GaussianBlur(radius=2.2)))
+                draw = ImageDraw.Draw(panel)
         draw.rounded_rectangle(
             (1, 1, width - 2, height - 2),
-            radius=22,
-            outline=(43, 245, 204, int(90 + pulse * 36)),
+            radius=26,
+            outline=self._hex_rgba(palette["accent"], int(86 + pulse * 24)),
             width=1,
         )
-        draw.rounded_rectangle((4, 4, width - 5, 44), radius=18, fill=(255, 237, 177, 18))
+        draw.rounded_rectangle((5, 5, width - 6, 34), radius=18, fill=(255, 255, 255, 42 if light else 14))
 
         halo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         halo_draw = ImageDraw.Draw(halo)
-        halo_draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=22, outline=(255, 198, 108, 94), width=2)
+        halo_draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=26, outline=self._hex_rgba(palette["warm"], 82), width=2)
         panel = Image.alpha_composite(panel, halo.filter(ImageFilter.GaussianBlur(radius=2.2)))
         keyed = Image.new("RGBA", (width, height), (*key_rgb, 255))
         keyed.paste(panel, (0, 0), panel.split()[-1])
@@ -1636,7 +1660,7 @@ class Overlay:
         window.resizable(False, False)
         self._apply_glass_effect(window, bg)
         try:
-            self._style_settings_widgets(window, self._settings_palette(self.config.get("ui", {}).get("theme", "dark")))
+            self._style_settings_widgets(window, self._settings_palette(self._settings_theme_key()))
         except Exception:
             pass
         window.attributes("-topmost", True)
@@ -1912,30 +1936,107 @@ class Overlay:
         ttk.Label(button_row, textvariable=save_status_var).pack(side="left", padx=(4, 0))
         ttk.Button(button_row, text="Close", command=window.destroy).pack(side="right")
 
+    def _settings_theme_options(self) -> list[str]:
+        families = [
+            "Flow",
+            "Ember Glass",
+            "Teal Circuit",
+            "Solar Ribbon",
+            "Crimson Bloom",
+            "Aqua Noir",
+            "Champagne Glass",
+            "Violet Signal",
+            "Graphite Pulse",
+            "Ivory Halo",
+        ]
+        return [f"{family} {mode}" for family in families for mode in ("Dark", "Light")]
+
+    def _settings_theme_key(self, value: str | None = None) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            raw = str(self.config.setdefault("ui", {}).get("settings_theme") or self.config.get("ui", {}).get("theme") or "Flow Dark")
+        aliases = {
+            "dark": "Flow Dark",
+            "light": "Flow Light",
+            "flow": "Flow Dark",
+            "noir": "Aqua Noir Dark",
+        }
+        normalized = aliases.get(raw.lower(), raw)
+        options = self._settings_theme_options()
+        for option in options:
+            if option.lower() == normalized.lower():
+                return option
+        return "Flow Light" if normalized.lower().endswith("light") else "Flow Dark"
+
     def _settings_palette(self, theme: str) -> dict[str, str]:
-        if str(theme).lower() == "light":
+        theme = self._settings_theme_key(theme)
+        light = theme.endswith("Light")
+        family = theme.removesuffix(" Dark").removesuffix(" Light")
+        accents = {
+            "Flow": ("#37e2c0", "#ffca68", "#ff4f73"),
+            "Ember Glass": ("#ff8a52", "#ffe090", "#15d7c0"),
+            "Teal Circuit": ("#23e7ce", "#7cf7d4", "#ffbd6d"),
+            "Solar Ribbon": ("#ffd36f", "#ff674d", "#28dcc3"),
+            "Crimson Bloom": ("#ff466f", "#ffc773", "#31d6c3"),
+            "Aqua Noir": ("#3fe8ff", "#20d4aa", "#ff7060"),
+            "Champagne Glass": ("#e7c989", "#fff0bc", "#16bfa9"),
+            "Violet Signal": ("#b88cff", "#54dfff", "#ffcd73"),
+            "Graphite Pulse": ("#8ea4ff", "#39d7c6", "#ffd067"),
+            "Ivory Halo": ("#d7b56d", "#72d9cb", "#ff8666"),
+        }
+        accent, accent2, warm = accents.get(family, accents["Flow"])
+        if light:
             return {
-                "bg": "#edf3ee",
-                "panel": "#f8fbf6",
+                "name": theme,
+                "mode": "light",
+                "bg": "#eef4f1",
+                "panel": "#f8fbf7",
                 "surface": "#ffffff",
                 "field": "#ffffff",
-                "text": "#132321",
-                "muted": "#55706b",
-                "accent": "#0f8f79",
-                "button": "#dae9e3",
-                "select": "#d0f0e7",
+                "text": "#142321",
+                "muted": "#5b706c",
+                "accent": accent,
+                "accent2": accent2,
+                "warm": warm,
+                "button": "#dfeae6",
+                "select": "#d3f1e8",
+                "stroke": "#bfd3cc",
+                "glass": "#ffffff",
             }
         return {
-            "bg": "#071113",
-            "panel": "#0d1a1d",
+            "name": theme,
+            "mode": "dark",
+            "bg": "#061012",
+            "panel": "#0b181b",
             "surface": "#111f23",
-            "field": "#17282c",
+            "field": "#16272b",
             "text": "#edf7f3",
-            "muted": "#8aa09c",
-            "accent": "#37e2c0",
+            "muted": "#8fa6a1",
+            "accent": accent,
+            "accent2": accent2,
+            "warm": warm,
             "button": "#16282d",
-            "select": "#173b39",
+            "select": "#173c39",
+            "stroke": "#244648",
+            "glass": "#091719",
         }
+
+    def _provider_status_text(self, provider_id: str) -> str:
+        provider = PROVIDER_BY_ID.get(provider_id, PROVIDER_BY_ID["deepgram"])
+        if provider.api_kind == "external":
+            details = provider.notes or "Adapter pending. The settings are saved, but transcription is not wired yet."
+            return f"Adapter pending: {details}"
+        if provider.id == "deepgram":
+            return "Wired: live streaming transcription. Starts only after a trigger or pill click."
+        if provider.api_kind == "openai_batch":
+            return "Wired: batch transcription through an OpenAI-compatible /v1/audio/transcriptions endpoint."
+        if provider.id == "elevenlabs":
+            return "Wired: batch speech-to-text conversion endpoint."
+        if provider.id == "assemblyai":
+            return "Wired: batch upload, transcript job creation, and polling."
+        if provider.id == "google_gemini":
+            return "Wired: batch audio understanding through Gemini generateContent."
+        return "Registered provider. Check docs and adapter status before relying on it."
 
     def _style_settings_widgets(self, window: tk.Toplevel, palette: dict[str, str]) -> None:
         style = ttk.Style(window)
@@ -1988,58 +2089,88 @@ class Overlay:
         width = max(320, int(width))
         height = max(72, int(height))
         palette = self._settings_palette(theme)
-        field = self._compact_wave_frame(max(1, width), max(1, height), active=True) or self._compact_reference_fallback(
-            max(1, width), max(1, height)
+        light = palette["mode"] == "light"
+        key_rgb = self._rgb(TRANSPARENT_COLOR)
+        field = Image.new("RGBA", (width, height), (*key_rgb, 255))
+        panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(panel)
+        glass_fill = (255, 255, 255, 214) if light else (7, 18, 20, 224)
+        stroke = self._hex_rgba(palette["stroke"], 130 if light else 118)
+        draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=24, fill=glass_fill, outline=stroke, width=1)
+
+        accent_width = min(210, max(150, width // 4))
+        accent = self._compact_wave_frame(accent_width, max(42, height - 30), active=True) or self._compact_reference_fallback(
+            accent_width, max(42, height - 30)
         )
-        if field.mode != "RGBA":
-            field = field.convert("RGBA")
-        field = ImageEnhance.Color(field).enhance(1.15)
-        field = ImageEnhance.Contrast(field).enhance(1.05)
-        overlay = Image.new(
-            "RGBA",
-            field.size,
-            (4, 13, 16, 112) if str(theme).lower() != "light" else (245, 251, 247, 70),
+        if accent.mode != "RGBA":
+            accent = accent.convert("RGBA")
+        accent = ImageEnhance.Color(accent).enhance(1.22)
+        accent = ImageEnhance.Contrast(accent).enhance(1.08)
+        accent_mask = Image.new("L", accent.size, 0)
+        accent_draw = ImageDraw.Draw(accent_mask)
+        accent_draw.rounded_rectangle((0, 0, accent.width - 1, accent.height - 1), radius=accent.height // 2, fill=188)
+        accent_x = 18
+        accent_y = max(8, (height - accent.height) // 2)
+        panel.paste(accent, (accent_x, accent_y), accent_mask)
+
+        aura = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        aura_draw = ImageDraw.Draw(aura)
+        aura_draw.rounded_rectangle(
+            (accent_x - 4, accent_y - 4, accent_x + accent.width + 4, accent_y + accent.height + 4),
+            radius=accent.height // 2 + 4,
+            outline=self._hex_rgba(palette["accent"], 110),
+            width=2,
         )
-        field = Image.alpha_composite(field, overlay)
-        vignette = Image.new("RGBA", field.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(vignette)
-        draw.rounded_rectangle((8, 8, width - 9, height - 9), radius=26, outline=(57, 245, 204, 90), width=1)
-        draw.rounded_rectangle((12, 12, width - 13, 48), radius=18, fill=(255, 237, 177, 22))
-        field = Image.alpha_composite(field, vignette)
+        aura = aura.filter(ImageFilter.GaussianBlur(radius=2.4))
+        panel = Image.alpha_composite(panel, aura)
+
+        sheen = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        sheen_draw = ImageDraw.Draw(sheen)
+        sheen_draw.rounded_rectangle((2, 2, width - 3, 34), radius=22, fill=(255, 255, 255, 22 if not light else 68))
+        panel = Image.alpha_composite(panel, sheen)
+        field = Image.alpha_composite(field, panel)
         self.settings_header_photo = ImageTk.PhotoImage(field.convert("RGB"))
         canvas.delete("all")
         canvas.configure(bg=palette["bg"], highlightthickness=0, bd=0)
         canvas.create_image(0, 0, image=self.settings_header_photo, anchor="nw")
         canvas.create_text(
-            24,
-            34,
+            accent_x + accent_width + 22,
+            32,
             text="Talk Dat Shi",
             anchor="w",
             fill=palette["text"],
-            font=("Segoe UI Semibold", 18),
+            font=("Segoe UI Semibold", 17),
         )
         canvas.create_text(
-            24,
-            62,
-            text="Settings",
+            accent_x + accent_width + 22,
+            58,
+            text=f"Settings - {palette['name']} - local private config",
             anchor="w",
             fill=palette["muted"],
             font=("Segoe UI", 10),
         )
         close_left = width - 55
-        canvas.create_oval(close_left, 20, close_left + 28, 48, outline="#f7d99a", width=1, fill="#142629")
+        canvas.create_oval(
+            close_left,
+            20,
+            close_left + 28,
+            48,
+            outline=palette["warm"],
+            width=1,
+            fill=palette["button"],
+        )
         canvas.create_text(
             close_left + 14,
             34,
             text="X",
-            fill="#f7d99a",
+            fill=palette["warm"],
             font=("Segoe UI Semibold", 9),
         )
 
     def open_onboarding(self) -> None:
         self.force_visible()
         ui = self.config.setdefault("ui", {})
-        theme = str(ui.get("theme", "dark")).lower()
+        theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
         window = self._utility_window("onboarding", "Talk Dat Shi Setup", "820x610", bg=palette["bg"])
         if window is None:
@@ -2257,7 +2388,7 @@ class Overlay:
     def open_settings(self) -> None:
         self.force_visible()
         ui = self.config.setdefault("ui", {})
-        theme = str(ui.get("theme", "dark")).lower()
+        theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
         window = self._utility_window("settings", "Talk Dat Shi Settings", "980x760", bg=palette["bg"])
         if window is None:
@@ -2333,7 +2464,7 @@ class Overlay:
         transforms = self.config.setdefault("transforms", {})
         ollama = transforms.setdefault("ollama", {})
 
-        theme_var = tk.StringVar(value=theme)
+        theme_var = tk.StringVar(value=self._settings_theme_key(theme))
         header.bind("<Configure>", redraw_header)
         def header_click(event: tk.Event) -> str | None:
             if int(getattr(event, "x", 0)) >= max(0, header.winfo_width() - 62) and int(getattr(event, "y", 0)) <= 58:
@@ -2353,44 +2484,7 @@ class Overlay:
         auto_paste_var = tk.BooleanVar(value=bool(dictation_config.get("auto_paste", True)))
         smart_space_var = tk.BooleanVar(value=bool(dictation_config.get("smart_leading_space", True)))
 
-        deepgram_model_options = [
-            "nova-3",
-            "nova-3-general",
-            "nova-3-medical",
-            "nova-2",
-            "nova-2-general",
-            "nova-2-meeting",
-            "nova-2-phonecall",
-            "nova-2-finance",
-            "nova-2-conversationalai",
-            "nova-2-voicemail",
-            "nova-2-video",
-            "nova-2-medical",
-            "nova-2-drivethru",
-            "nova-2-automotive",
-            "nova-2-atc",
-            "enhanced",
-            "enhanced-general",
-            "enhanced-meeting",
-            "enhanced-phonecall",
-            "enhanced-finance",
-            "base",
-            "base-general",
-            "base-meeting",
-            "base-phonecall",
-            "base-finance",
-            "base-conversationalai",
-            "base-voicemail",
-            "base-video",
-            "whisper",
-            "whisper-tiny",
-            "whisper-base",
-            "whisper-small",
-            "whisper-medium",
-            "whisper-large",
-            "flux-general-en",
-            "flux-general-multi",
-        ]
+        deepgram_model_options = [model.id for model in PROVIDER_BY_ID["deepgram"].models]
 
         active_provider_id = selected_provider_id(self.config)
         active_model_id = selected_model_id(self.config, active_provider_id)
@@ -2402,8 +2496,12 @@ class Overlay:
         stt_variant_var = tk.StringVar(value=selected_variant(self.config, active_provider_id))
         stt_key_var = tk.StringVar(value=str(active_settings.get("api_key", "")))
         stt_base_var = tk.StringVar(value=str(active_settings.get("api_base") or PROVIDER_BY_ID[active_provider_id].api_base))
+        stt_key_label_var = tk.StringVar(value=PROVIDER_BY_ID[active_provider_id].key_label)
+        stt_env_var = tk.StringVar(value=PROVIDER_BY_ID[active_provider_id].env_key or "No key required")
         stt_docs_var = tk.StringVar(value=str(PROVIDER_BY_ID[active_provider_id].docs_url or "Custom/local provider"))
         stt_capability_var = tk.StringVar(value=provider_capability_summary(active_provider_id, active_model_id))
+        stt_status_var = tk.StringVar(value=self._provider_status_text(active_provider_id))
+        stt_extra_text: tk.Text | None = None
 
         def remember_provider_fields(provider_id: str) -> None:
             settings = provider_settings(self.config, provider_id)
@@ -2412,6 +2510,17 @@ class Overlay:
             settings["model"] = model_id_for_label(provider_id, stt_model_var.get())
             model = model_for_id(provider_id, settings["model"])
             settings["variant"] = stt_variant_var.get().strip() or model.variants[0]
+            if stt_extra_text is not None:
+                raw = stt_extra_text.get("1.0", "end-1c").strip()
+                if not raw:
+                    settings["extra"] = {}
+                else:
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        settings["extra"] = parsed
 
         def refresh_provider_fields(*, keep_model: bool = False) -> None:
             provider_id = provider_id_for_label(stt_provider_var.get())
@@ -2431,8 +2540,14 @@ class Overlay:
                 stt_variant_var.set(chosen_model.variants[0])
             stt_key_var.set(str(settings.get("api_key", "")))
             stt_base_var.set(str(settings.get("api_base") or provider.api_base))
+            stt_key_label_var.set(provider.key_label)
+            stt_env_var.set(provider.env_key or "No key required")
             stt_docs_var.set(str(provider.docs_url or "Custom/local provider"))
             stt_capability_var.set(provider_capability_summary(provider_id, chosen_model_id))
+            stt_status_var.set(self._provider_status_text(provider_id))
+            if stt_extra_text is not None:
+                stt_extra_text.delete("1.0", "end")
+                stt_extra_text.insert("1.0", json.dumps(settings.get("extra", {}), indent=2, ensure_ascii=False))
             provider_holder["id"] = provider_id
 
         def on_provider_change(_event: tk.Event | None = None) -> None:
@@ -2478,31 +2593,48 @@ class Overlay:
         )
         stt_provider_box.bind("<<ComboboxSelected>>", on_provider_change)
         stt_model_box.bind("<<ComboboxSelected>>", on_model_change)
+        stt_extra_text = text_box(providers_tab, 7)
+        stt_extra_text.insert("1.0", json.dumps(active_settings.get("extra", {}), indent=2, ensure_ascii=False))
         add_row(providers_tab, 1, "Brand", stt_provider_box)
         add_row(providers_tab, 2, "Model", stt_model_box)
         add_row(providers_tab, 3, "Mode / trim", stt_variant_box)
-        add_row(providers_tab, 4, "Provider API key", entry(providers_tab, stt_key_var, 72, show="*"))
+        add_row(providers_tab, 4, "Secret / credential", entry(providers_tab, stt_key_var, 72, show="*"))
         add_row(providers_tab, 5, "API base", entry(providers_tab, stt_base_var, 72))
+        ttk.Label(providers_tab, textvariable=stt_key_label_var, style="Flow.Muted.TLabel").grid(
+            row=6, column=1, sticky="w", pady=(2, 2)
+        )
+        ttk.Label(providers_tab, textvariable=stt_env_var, style="Flow.Muted.TLabel").grid(
+            row=7, column=1, sticky="w", pady=(2, 8)
+        )
         ttk.Label(providers_tab, textvariable=stt_capability_var, style="Flow.Muted.TLabel").grid(
-            row=6, column=1, sticky="w", pady=(2, 8)
+            row=8, column=1, sticky="w", pady=(2, 4)
         )
-        ttk.Label(providers_tab, text="Docs", style="Flow.TLabel").grid(row=7, column=0, sticky="w", pady=5, padx=(0, 14))
+        ttk.Label(providers_tab, textvariable=stt_status_var, wraplength=700, style="Flow.Muted.TLabel").grid(
+            row=9, column=1, sticky="ew", pady=(0, 8)
+        )
+        ttk.Label(providers_tab, text="Docs", style="Flow.TLabel").grid(row=10, column=0, sticky="w", pady=5, padx=(0, 14))
         ttk.Label(providers_tab, textvariable=stt_docs_var, wraplength=650, style="Flow.Muted.TLabel").grid(
-            row=7, column=1, sticky="ew", pady=5
+            row=10, column=1, sticky="ew", pady=5
         )
+        ttk.Label(providers_tab, text="Advanced options JSON", style="Flow.TLabel").grid(
+            row=11, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        )
+        stt_extra_text.grid(row=12, column=0, columnspan=2, sticky="nsew", pady=(0, 8))
         ttk.Label(
             providers_tab,
-            text="External providers are listed now so the framework is future-proof; currently wired adapters are Deepgram streaming plus OpenAI-compatible, ElevenLabs, AssemblyAI, and Gemini batch transcription.",
+            text="Credentials, dictionaries, snippets, transcripts, and provider options are private user config in AppData. Public GitHub downloads start with empty settings.",
             wraplength=850,
             style="Flow.Muted.TLabel",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(8, 0))
         providers_tab.columnconfigure(1, weight=1)
+        providers_tab.rowconfigure(12, weight=1)
 
         add_row(core_tab, 0, "Active brand", ttk.Label(core_tab, textvariable=stt_provider_var, style="Flow.TLabel"))
         add_row(core_tab, 1, "Active model", ttk.Label(core_tab, textvariable=stt_model_var, style="Flow.TLabel"))
         add_row(core_tab, 2, "Language", entry(core_tab, language_var, 20))
         add_row(core_tab, 3, "Auto Cleanup", combo(core_tab, level_var, ["none", "light", "medium", "high"], 20))
-        add_row(core_tab, 4, "Theme", combo(core_tab, theme_var, ["dark", "light"], 20))
+        theme_box = combo(core_tab, theme_var, self._settings_theme_options(), 28)
+        add_row(core_tab, 4, "Settings menu theme", theme_box)
         check(core_tab, "Save local transcript history", save_history_var, 5)
         check(core_tab, "Play start and stop sounds", play_sounds_var, 6)
         check(core_tab, "Auto paste transcript", auto_paste_var, 7)
@@ -2746,12 +2878,14 @@ class Overlay:
                 snippets = parse_json_list(snippets_text, "Snippets")
                 custom_transforms = parse_json_list(custom_text, "Custom transforms")
                 deepgram_extra = parse_json_object(extra_text, "Extra Deepgram params")
+                provider_extra = parse_json_object(stt_extra_text, "Provider advanced options") if stt_extra_text else {}
             except ValueError as error:
                 save_status_var.set(str(error))
                 self.set_state("error", "Settings not saved.", str(error))
                 return
 
-            ui["theme"] = theme_var.get().strip().lower() or "dark"
+            ui["settings_theme"] = self._settings_theme_key(theme_var.get())
+            ui["theme"] = "light" if ui["settings_theme"].endswith("Light") else "dark"
             deepgram["api_key"] = key_var.get().strip()
             deepgram["model"] = model_var.get().strip() or "nova-3"
             deepgram["language"] = language_var.get().strip() or "en-US"
@@ -2779,6 +2913,7 @@ class Overlay:
             active_provider = provider_id_for_label(stt_provider_var.get())
             active_settings = provider_settings(self.config, active_provider)
             active_settings["language"] = language_var.get().strip() or "en-US"
+            active_settings["extra"] = provider_extra
             if active_provider == "deepgram":
                 if stt_key_var.get().strip():
                     active_settings["api_key"] = stt_key_var.get().strip()

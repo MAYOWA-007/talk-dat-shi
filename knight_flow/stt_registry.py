@@ -66,6 +66,7 @@ PROVIDERS: tuple[STTProvider, ...] = (
         models=(
             STTModel("gpt-4o-transcribe", "GPT-4o Transcribe", "batch", ("json", "text")),
             STTModel("gpt-4o-mini-transcribe", "GPT-4o Mini Transcribe", "batch", ("json", "text")),
+            STTModel("gpt-4o-transcribe-diarize", "GPT-4o Transcribe Diarize", "batch", ("diarized_json", "json")),
             STTModel("whisper-1", "Whisper-1", "batch", ("json", "text")),
         ),
     ),
@@ -115,6 +116,9 @@ PROVIDERS: tuple[STTProvider, ...] = (
         docs_url="https://docs.mistral.ai/capabilities/audio/",
         api_base="https://api.mistral.ai",
         models=(
+            STTModel("voxtral-mini-transcribe-latest", "Voxtral Mini Transcribe", "batch", ("json", "text")),
+            STTModel("voxtral-small-transcribe-latest", "Voxtral Small Transcribe", "batch", ("json", "text")),
+            STTModel("voxtral-mini-transcribe-2", "Voxtral Mini Transcribe 2", "batch", ("json", "text")),
             STTModel("voxtral-mini-latest", "Voxtral Mini Transcribe", "batch", ("json", "text")),
             STTModel("voxtral-small-latest", "Voxtral Small Transcribe", "batch", ("json", "text")),
         ),
@@ -145,6 +149,7 @@ PROVIDERS: tuple[STTProvider, ...] = (
         models=(
             STTModel("gemini-2.5-pro", "Gemini 2.5 Pro", "batch", ("default", "low-latency", "high-accuracy")),
             STTModel("gemini-2.5-flash", "Gemini 2.5 Flash", "batch", ("default", "low-latency")),
+            STTModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", "batch", ("default", "low-latency")),
             STTModel("gemini-2.0-flash", "Gemini 2.0 Flash", "batch", ("default",)),
         ),
     ),
@@ -369,6 +374,7 @@ def provider_settings(config: dict[str, Any], provider_id: str | None = None) ->
         settings.setdefault("model", provider.models[0].id)
         settings.setdefault("variant", provider.models[0].variants[0])
         settings.setdefault("api_base", provider.api_base)
+        settings.setdefault("extra", {})
     return settings
 
 

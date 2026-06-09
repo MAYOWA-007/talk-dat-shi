@@ -33,15 +33,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stt": {
         "provider": "deepgram",
         "providers": {
-            "deepgram": {"api_key": "", "model": "nova-3", "variant": "streaming"},
-            "openai": {"api_key": "", "model": "gpt-4o-transcribe", "variant": "json"},
-            "elevenlabs": {"api_key": "", "model": "scribe_v2", "variant": "default"},
-            "xai": {"api_key": "", "model": "grok-speech-to-text", "variant": "json"},
-            "groq": {"api_key": "", "model": "whisper-large-v3", "variant": "json"},
-            "mistral": {"api_key": "", "model": "voxtral-mini-latest", "variant": "json"},
-            "assemblyai": {"api_key": "", "model": "universal-3-pro", "variant": "default"},
-            "google_gemini": {"api_key": "", "model": "gemini-2.5-pro", "variant": "default"},
-            "custom_openai": {"api_key": "", "api_base": "", "model": "custom-model", "variant": "json"},
+            "deepgram": {"api_key": "", "model": "nova-3", "variant": "streaming", "extra": {}},
+            "openai": {"api_key": "", "model": "gpt-4o-transcribe", "variant": "json", "extra": {}},
+            "elevenlabs": {"api_key": "", "model": "scribe_v2", "variant": "default", "extra": {}},
+            "xai": {"api_key": "", "model": "grok-speech-to-text", "variant": "json", "extra": {}},
+            "groq": {"api_key": "", "model": "whisper-large-v3", "variant": "json", "extra": {}},
+            "mistral": {"api_key": "", "model": "voxtral-mini-transcribe-latest", "variant": "json", "extra": {}},
+            "assemblyai": {"api_key": "", "model": "universal-3-pro", "variant": "default", "extra": {}},
+            "google_gemini": {"api_key": "", "model": "gemini-2.5-pro", "variant": "default", "extra": {}},
+            "custom_openai": {"api_key": "", "api_base": "", "model": "custom-model", "variant": "json", "extra": {}},
         },
     },
     "hotkeys": {
@@ -134,6 +134,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "ui": {
         "theme": "dark",
+        "settings_theme": "Flow Dark",
     },
     "onboarding": {
         "completed": False,

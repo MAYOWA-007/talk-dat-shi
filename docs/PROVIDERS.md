@@ -9,14 +9,21 @@ These providers can currently run inside the app.
 | Provider | Mode | Notes |
 | --- | --- | --- |
 | Deepgram | Streaming | Best default for live push-to-talk. Uses Deepgram WebSocket streaming. |
-| OpenAI | Batch | Records locally, then sends WAV audio after release. |
+| OpenAI | Batch | Records locally, then sends WAV audio after release. Includes GPT-4o, GPT-4o Mini, Whisper-1, and GPT-4o diarize choices. |
 | Groq | Batch | Uses an OpenAI-compatible transcription endpoint. |
 | xAI | Batch | Uses an OpenAI-compatible transcription endpoint. |
-| Mistral | Batch | Uses an OpenAI-compatible transcription endpoint. |
+| Mistral | Batch | Uses an OpenAI-compatible transcription endpoint with Voxtral transcribe choices. |
 | Custom OpenAI-Compatible | Batch | Set API base to a server that accepts `POST /v1/audio/transcriptions`. |
 | ElevenLabs | Batch | Uses the speech-to-text conversion endpoint. |
 | AssemblyAI | Batch | Uploads audio, starts a transcript job, then polls for completion. |
 | Google Gemini | Batch | Sends WAV audio as inline content to Gemini. |
+
+Provider-specific advanced options are saved as JSON per provider and passed into wired adapters where supported:
+
+- OpenAI-compatible providers: extra scalar fields are added to the multipart transcription request.
+- ElevenLabs: extra scalar fields are added to the speech-to-text request.
+- AssemblyAI: extra JSON fields are merged into the transcript job body.
+- Gemini: `prompt` can override the default transcription prompt.
 
 ## Registered But Adapter-Pending
 
@@ -42,6 +49,8 @@ Keys are not stored in the repo. User-entered keys are saved only in:
 ```
 
 Users may also provide keys through environment variables such as `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `ELEVENLABS_API_KEY`, `ASSEMBLYAI_API_KEY`, and `GEMINI_API_KEY`.
+
+Custom dictionary words, snippets, provider advanced options, transcript history, live drafts, and scratchpad content are also user-private local files under `%APPDATA%\TalkDatShi`. Public GitHub downloads start empty.
 
 ## Adding A Provider
 

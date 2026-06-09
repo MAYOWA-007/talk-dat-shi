@@ -17,6 +17,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
 - Right-click overlay menu for Settings and History.
+- Glass settings UI with 10 named theme families in dark and light variants.
 - Local transcript history and live draft files.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
 - Provider framework with Deepgram streaming plus several batch transcription adapters.
@@ -97,6 +98,8 @@ When you are ready to create the public repository, follow [docs/GITHUB_PUBLISH.
 ## Privacy
 
 Talk Dat Shi does not run a server. Audio is captured locally only after a trigger, then sent to the selected STT provider for transcription. Transcript history is local and can be disabled in Settings.
+
+User API keys, dictionaries, snippets, provider advanced options, transcript history, and scratchpad content live under `%APPDATA%\TalkDatShi`. They are not part of the public GitHub repository or default download.
 
 Local files:
 

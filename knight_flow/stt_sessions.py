@@ -199,7 +199,7 @@ class BatchSTTSession:
             url = base + "/v1/audio/transcriptions"
         else:
             url = base + "/v1/audio/transcriptions"
-        response_format = self.variant if self.variant in {"json", "text", "verbose_json"} else "json"
+        response_format = self.variant if self.variant in {"json", "text", "verbose_json", "diarized_json"} else "json"
         fields: dict[str, str] = {"model": self.model, "response_format": response_format}
         if self.language:
             fields["language"] = self.language.split("-")[0]
