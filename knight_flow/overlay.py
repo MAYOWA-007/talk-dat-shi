@@ -1,0 +1,2990 @@
+from __future__ import annotations
+
+import ctypes
+import json
+import math
+import os
+import sys
+import tkinter as tk
+import time
+from collections.abc import Callable
+from pathlib import Path
+from tkinter import ttk
+from typing import Any
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageTk
+
+from .config import config_path, full_history_path, history_path, live_draft_path, scratchpad_path
+from .icon import ensure_icon_file
+from .stt_registry import (
+    PROVIDER_BY_ID,
+    model_for_id,
+    model_id_for_label,
+    model_label,
+    model_labels,
+    provider_capability_summary,
+    provider_id_for_label,
+    provider_label,
+    provider_labels,
+    provider_settings,
+    selected_model_id,
+    selected_provider_id,
+    selected_variant,
+    sync_legacy_deepgram,
+)
+
+
+Callback = Callable[[], None]
+
+
+class RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+TRANSPARENT_COLOR = "#010203"
+LIVE_STATES = {"starting", "connected", "listening", "processing", "command"}
+
+
+class Overlay:
+    def __init__(self, config: dict[str, Any], callbacks: dict[str, Callback]) -> None:
+        self.config = config
+        self.callbacks = callbacks
+        overlay_config = config.get("overlay", {})
+        self.active_pill_width = int(overlay_config.get("active_pill_width", overlay_config.get("width", 320)))
+        self.active_pill_height = int(overlay_config.get("active_pill_height", overlay_config.get("height", 58)))
+        self.active_width = int(overlay_config.get("active_width", self.active_pill_width))
+        self.active_height = int(overlay_config.get("active_height", self.active_pill_height))
+        self.expanded_width = self.active_width
+        self.expanded_height = self.active_height
+        self.compact_width = int(overlay_config.get("compact_width", max(1, round(self.active_pill_width / 2))))
+        self.compact_height = int(overlay_config.get("compact_height", max(1, round(self.active_pill_height / 2))))
+        self.current_width = self.compact_width
+        self.current_height = self.compact_height
+        self.bottom_margin = int(overlay_config.get("bottom_margin", 68))
+        self.result_hold_ms = int(overlay_config.get("result_hold_ms", 2400))
+        self.error_hold_ms = int(overlay_config.get("error_hold_ms", 5200))
+        self.active_frame_ms = int(overlay_config.get("active_frame_ms", 16))
+        self.idle_frame_ms = int(overlay_config.get("idle_frame_ms", 33))
+        self.resize_frame_ms = int(overlay_config.get("resize_frame_ms", 12))
+        self.active_loop_seconds = float(overlay_config.get("active_loop_seconds", 3.84))
+        self.idle_loop_seconds = float(overlay_config.get("idle_loop_seconds", 8.0))
+        self.fixed_position = bool(overlay_config.get("fixed_position", True))
+        self.no_activate = bool(overlay_config.get("no_activate", True))
+        self.opacity = float(overlay_config.get("opacity", 0.94))
+
+        self.root = tk.Tk()
+        self.root.title("Talk Dat Shi")
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.attributes("-alpha", self.opacity)
+        self.root.configure(bg=TRANSPARENT_COLOR)
+        try:
+            self.root.attributes("-transparentcolor", TRANSPARENT_COLOR)
+        except Exception:
+            pass
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        try:
+            self.root.iconbitmap(str(ensure_icon_file()))
+        except Exception:
+            pass
+
+        self.state = "idle"
+        self.level = 0.0
+        self.display_level = 0.0
+        self.hover_level = 0.0
+        self.hovered = False
+        self.phase = 0
+        self.started_at = time.perf_counter()
+        self.drag_origin: tuple[int, int] | None = None
+        self.compact = True
+        self.last_status = "Mic off. Hold Ctrl+Win to record."
+        self.last_preview = ""
+        self.resize_after_id: str | None = None
+        self.idle_after_id: str | None = None
+        self.utility_windows: dict[str, tk.Toplevel] = {}
+        self.context_menu_window: tk.Toplevel | None = None
+        self.context_menu_canvas: tk.Canvas | None = None
+        self.context_menu_photo: ImageTk.PhotoImage | None = None
+        self.context_menu_after_id: str | None = None
+        self.context_menu_hover = ""
+        self.settings_header_photo: ImageTk.PhotoImage | None = None
+        self.visual_photo: ImageTk.PhotoImage | None = None
+        self.visual_canvas_item: int | None = None
+        self.flow_loop_strip: Image.Image | None = None
+        self.flow_loop_meta: dict[str, int | float] = {}
+        self.flow_frame_cache: dict[tuple[int, int], list[Image.Image]] = {}
+        self.flow_single_frame_cache: dict[tuple[int, int, int], Image.Image] = {}
+        self.active_render_cache: dict[tuple[int, ...], Image.Image] = {}
+        self.active_photo_cache: dict[tuple[int, ...], ImageTk.PhotoImage] = {}
+        self.idle_render_cache: dict[tuple[int, ...], Image.Image] = {}
+        self.idle_photo_cache: dict[tuple[int, ...], ImageTk.PhotoImage] = {}
+        self.last_flow_render_key: tuple[int, int] | None = None
+        self.last_animation_tick = time.perf_counter()
+        self.utility_drag_origin: tuple[int, int, int, int] | None = None
+        self.compact_wave_strip: Image.Image | None = None
+        self.compact_wave_reference: Image.Image | None = None
+        self.compact_wave_meta: dict[str, int | float] = {}
+        self.compact_mask_cache: dict[tuple[int, int], Image.Image] = {}
+        self.wave_loop_start = int(overlay_config.get("wave_loop_start", 0))
+        self.wave_loop_end = int(overlay_config.get("wave_loop_end", 50))
+        self._load_flow_loop_assets()
+        self._load_compact_wave_assets()
+
+        self.container = tk.Frame(
+            self.root,
+            bg=TRANSPARENT_COLOR,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.container.pack(fill="both", expand=True)
+
+        self.canvas = tk.Canvas(self.container, bg=TRANSPARENT_COLOR, bd=0, highlightthickness=0)
+        self.canvas.place(x=0, y=0, width=self.current_width, height=self.current_height)
+
+        for widget in (self.root, self.container, self.canvas):
+            widget.bind("<Enter>", self._on_enter)
+            widget.bind("<Leave>", self._on_leave)
+            widget.bind("<Button-3>", self._open_context_menu_from_event)
+        for widget in (self.root, self.container, self.canvas):
+            widget.bind("<ButtonPress-1>", self._start_drag)
+            widget.bind("<B1-Motion>", self._drag)
+            widget.bind("<ButtonRelease-1>", self._end_drag)
+        self.root.bind("<Configure>", lambda _event: self._repaint())
+
+        self.root.update_idletasks()
+        self._layout_compact()
+        self._position()
+        self.root.after(80, self._post_init)
+        self.root.after(220, self.force_visible)
+        self.root.after(560, self._warm_visual_caches)
+        self.root.after(80, self._animate)
+
+    def _asset_path(self, filename: str) -> Path:
+        local_path = Path(__file__).resolve().parent / "assets" / filename
+        if local_path.exists():
+            return local_path
+        bundle_root = getattr(sys, "_MEIPASS", "")
+        if bundle_root:
+            bundled_path = Path(bundle_root) / "knight_flow" / "assets" / filename
+            if bundled_path.exists():
+                return bundled_path
+        return local_path
+
+    def _load_asset_image(self, filename: str) -> Image.Image | None:
+        try:
+            return Image.open(self._asset_path(filename)).convert("RGBA")
+        except Exception:
+            return None
+
+    def _load_flow_loop_assets(self) -> None:
+        asset_name = "flow_pill_60.png"
+        for candidate in ("flow_pill_240.png", "flow_pill_120.png", "flow_pill_60.png"):
+            if self._asset_path(candidate).exists():
+                asset_name = candidate
+                break
+        meta_name = asset_name.replace(".png", ".json")
+        self.flow_loop_strip = self._load_asset_image(asset_name)
+        meta_path = self._asset_path(meta_name)
+        loaded_meta: dict[str, Any] = {}
+        try:
+            if meta_path.exists():
+                loaded_meta = json.loads(meta_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            loaded_meta = {}
+
+        strip = self.flow_loop_strip
+        if strip is None:
+            self.flow_loop_meta = {}
+            return
+
+        frame_width = max(1, min(int(loaded_meta.get("frame_width", self.active_pill_width)), strip.width))
+        frame_height = max(1, min(int(loaded_meta.get("frame_height", self.active_pill_height)), strip.height))
+        columns = max(1, int(loaded_meta.get("columns", max(1, strip.width // frame_width))))
+        rows = max(1, strip.height // frame_height)
+        capacity = max(1, columns * rows)
+        frame_count = max(1, min(int(loaded_meta.get("frame_count", capacity)), capacity))
+        self.flow_loop_meta = {
+            "columns": columns,
+            "frame_count": frame_count,
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "fps": float(loaded_meta.get("fps", 60.0)),
+            "bridge_start_frame": int(loaded_meta.get("bridge_start_frame", frame_count)),
+            "source": str(loaded_meta.get("source", "")),
+            "direction": str(loaded_meta.get("direction", "")),
+            "no_pingpong": bool(loaded_meta.get("no_pingpong", False)),
+            "transparent_background": bool(loaded_meta.get("transparent_background", False)),
+        }
+
+    def _warm_visual_caches(self, start_index: int = 0) -> None:
+        if self.flow_loop_strip is None:
+            return
+        try:
+            frame_width = int(self.flow_loop_meta.get("frame_width", self.active_pill_width))
+            frame_height = int(self.flow_loop_meta.get("frame_height", self.active_pill_height))
+            columns = int(self.flow_loop_meta.get("columns", 1))
+            frame_count = int(self.flow_loop_meta.get("frame_count", 1))
+            clean_count = self._clean_loop_frame_count(frame_count)
+            end_index = min(clean_count, max(0, int(start_index)) + 24)
+            for index in range(max(0, int(start_index)), end_index):
+                self._flow_cached_frame_for_size(
+                    index,
+                    self.compact_width,
+                    self.compact_height,
+                    frame_width,
+                    frame_height,
+                    columns,
+                )
+                self._flow_cached_frame_for_size(
+                    index,
+                    self.active_pill_width,
+                    self.active_pill_height,
+                    frame_width,
+                    frame_height,
+                    columns,
+                )
+            if end_index < clean_count:
+                self.root.after(24, lambda next_index=end_index: self._warm_visual_caches(next_index))
+        except Exception:
+            pass
+
+    def _load_compact_wave_assets(self) -> None:
+        self.compact_wave_reference = self._load_asset_image("wave_reference.png")
+        self.compact_wave_strip = self._load_asset_image("wave_strip.png")
+        meta_path = self._asset_path("wave_strip.json")
+        loaded_meta: dict[str, Any] = {}
+        try:
+            if meta_path.exists():
+                loaded_meta = json.loads(meta_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            loaded_meta = {}
+
+        strip = self.compact_wave_strip
+        frame_width = int(loaded_meta.get("frame_width", self.compact_width))
+        frame_height = int(loaded_meta.get("frame_height", self.compact_height))
+        if strip is not None:
+            frame_width = max(1, min(frame_width, strip.width))
+            frame_height = max(1, min(frame_height, strip.height))
+            columns = max(1, int(loaded_meta.get("columns", max(1, strip.width // frame_width))))
+            rows = max(1, strip.height // frame_height)
+            capacity = max(1, columns * rows)
+            frame_count = max(1, min(int(loaded_meta.get("frame_count", capacity)), capacity))
+        else:
+            columns = 1
+            frame_count = 1
+
+        self.compact_wave_meta = {
+            "columns": columns,
+            "frame_count": frame_count,
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "fps": float(loaded_meta.get("fps", 24.0)),
+        }
+
+    def _callback(self, name: str) -> Callback:
+        return self.callbacks.get(name, lambda: None)
+
+    def apply_runtime_config(self) -> None:
+        overlay_config = self.config.get("overlay", {})
+        self.active_pill_width = int(overlay_config.get("active_pill_width", overlay_config.get("width", 320)))
+        self.active_pill_height = int(overlay_config.get("active_pill_height", overlay_config.get("height", 58)))
+        self.active_width = int(overlay_config.get("active_width", self.active_pill_width))
+        self.active_height = int(overlay_config.get("active_height", self.active_pill_height))
+        self.expanded_width = self.active_width
+        self.expanded_height = self.active_height
+        self.compact_width = int(overlay_config.get("compact_width", max(1, round(self.active_pill_width / 2))))
+        self.compact_height = int(overlay_config.get("compact_height", max(1, round(self.active_pill_height / 2))))
+        self.bottom_margin = int(overlay_config.get("bottom_margin", self.bottom_margin))
+        self.result_hold_ms = int(overlay_config.get("result_hold_ms", self.result_hold_ms))
+        self.error_hold_ms = int(overlay_config.get("error_hold_ms", self.error_hold_ms))
+        self.active_frame_ms = int(overlay_config.get("active_frame_ms", self.active_frame_ms))
+        self.idle_frame_ms = int(overlay_config.get("idle_frame_ms", self.idle_frame_ms))
+        self.resize_frame_ms = int(overlay_config.get("resize_frame_ms", self.resize_frame_ms))
+        self.active_loop_seconds = float(overlay_config.get("active_loop_seconds", self.active_loop_seconds))
+        self.idle_loop_seconds = float(overlay_config.get("idle_loop_seconds", self.idle_loop_seconds))
+        self.fixed_position = bool(overlay_config.get("fixed_position", self.fixed_position))
+        self.no_activate = bool(overlay_config.get("no_activate", self.no_activate))
+        self.opacity = float(overlay_config.get("opacity", self.opacity))
+        self.wave_loop_start = int(overlay_config.get("wave_loop_start", self.wave_loop_start))
+        self.wave_loop_end = int(overlay_config.get("wave_loop_end", self.wave_loop_end))
+        self.idle_render_cache.clear()
+        self.idle_photo_cache.clear()
+        self.active_render_cache.clear()
+        self.active_photo_cache.clear()
+        self.flow_single_frame_cache.clear()
+        try:
+            self.root.attributes("-alpha", self.opacity)
+        except Exception:
+            pass
+        self._set_compact(self.state == "idle", animate=True)
+        self.root.after(320, self._warm_visual_caches)
+
+    def _post_init(self) -> None:
+        if self.no_activate:
+            self._make_no_activate(self.root)
+        self._repaint()
+        self.force_visible()
+
+    def _make_no_activate(self, window: tk.Tk | tk.Toplevel) -> None:
+        try:
+            hwnd = int(window.winfo_id())
+            user32 = ctypes.windll.user32
+            gwl_exstyle = -20
+            ws_ex_toolwindow = 0x00000080
+            ws_ex_noactivate = 0x08000000
+            style = user32.GetWindowLongW(hwnd, gwl_exstyle)
+            user32.SetWindowLongW(hwnd, gwl_exstyle, style | ws_ex_toolwindow | ws_ex_noactivate)
+        except Exception:
+            pass
+
+    def _position(self) -> None:
+        self._apply_geometry(self.current_width, self.current_height)
+
+    def _apply_geometry(self, width: int, height: int) -> None:
+        self.root.update_idletasks()
+        left, top, right, bottom = self._logical_work_area()
+        screen_w = right - left
+        x = left + int((screen_w - width) / 2)
+        y = bottom - height - self.bottom_margin
+        self.current_width = width
+        self.current_height = height
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(width, height)
+        self.canvas.place(x=0, y=0, width=width, height=height)
+        self.root.update_idletasks()
+        self._apply_pill_region(width, height)
+        self._draw_visual()
+
+    def _apply_pill_region(self, width: int, height: int) -> None:
+        self._apply_window_region(self.root, width, height, max(1, height // 2))
+
+    def _apply_window_region(self, window: tk.Tk | tk.Toplevel, width: int, height: int, radius: int) -> None:
+        try:
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+            hwnd = int(window.winfo_id())
+            handles = {hwnd}
+            try:
+                ancestor = int(user32.GetAncestor(hwnd, 2))
+                if ancestor:
+                    handles.add(ancestor)
+            except Exception:
+                pass
+            try:
+                parent = int(user32.GetParent(hwnd))
+                if parent:
+                    handles.add(parent)
+            except Exception:
+                pass
+            for handle in handles:
+                corner = max(1, int(radius) * 2)
+                region = gdi32.CreateRoundRectRgn(0, 0, int(width) + 1, int(height) + 1, corner, corner)
+                if region:
+                    user32.SetWindowRgn(handle, region, True)
+        except Exception:
+            pass
+
+    def _set_compact(self, compact: bool, *, animate: bool = True) -> None:
+        if self.compact == compact and self.resize_after_id is None:
+            self._layout_compact()
+            self._position()
+            return
+
+        self.compact = compact
+        if compact:
+            self._layout_compact()
+            target_width = self.compact_width
+            target_height = self.compact_height
+        else:
+            self._layout_compact()
+            target_width = self.active_width
+            target_height = self.active_height
+
+        if self.resize_after_id:
+            try:
+                self.root.after_cancel(self.resize_after_id)
+            except Exception:
+                pass
+            self.resize_after_id = None
+
+        if not animate:
+            self._apply_geometry(target_width, target_height)
+            return
+
+        self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, 20)
+
+    def _animate_resize(
+        self,
+        start_width: int,
+        start_height: int,
+        target_width: int,
+        target_height: int,
+        step: int,
+        total_steps: int,
+    ) -> None:
+        progress = min(1.0, step / max(1, total_steps))
+        eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10)
+        width = int(start_width + (target_width - start_width) * eased)
+        height = int(start_height + (target_height - start_height) * eased)
+        self._apply_geometry(width, height)
+        if step >= total_steps:
+            self.resize_after_id = None
+            return
+        self.resize_after_id = self.root.after(
+            max(8, self.resize_frame_ms),
+            lambda: self._animate_resize(start_width, start_height, target_width, target_height, step + 1, total_steps),
+        )
+
+    def _layout_compact(self) -> None:
+        self.canvas.place(x=0, y=0, width=self.current_width, height=self.current_height)
+
+    def _layout_expanded(self) -> None:
+        self._layout_compact()
+
+    def _logical_work_area(self) -> tuple[int, int, int, int]:
+        tk_width = max(1, int(self.root.winfo_screenwidth()))
+        tk_height = max(1, int(self.root.winfo_screenheight()))
+        left, top, right, bottom = self._primary_work_area()
+        width = right - left
+        height = bottom - top
+        if width <= 0 or height <= 0:
+            return 0, 0, tk_width, tk_height
+
+        try:
+            user32 = ctypes.windll.user32
+            physical_width = int(user32.GetSystemMetrics(0))
+            physical_height = int(user32.GetSystemMetrics(1))
+        except Exception:
+            physical_width = 0
+            physical_height = 0
+
+        if physical_width > 0 and physical_height > 0:
+            scale_x = tk_width / physical_width
+            scale_y = tk_height / physical_height
+            if abs(scale_x - 1.0) > 0.01 or abs(scale_y - 1.0) > 0.01:
+                return (
+                    int(left * scale_x),
+                    int(top * scale_y),
+                    int(right * scale_x),
+                    int(bottom * scale_y),
+                )
+
+        if right > tk_width or bottom > tk_height:
+            return 0, 0, tk_width, tk_height
+        return left, top, right, bottom
+
+    def _primary_work_area(self) -> tuple[int, int, int, int]:
+        try:
+            rect = RECT()
+            spi_getworkarea = 0x0030
+            ctypes.windll.user32.SystemParametersInfoW(spi_getworkarea, 0, ctypes.byref(rect), 0)
+            if rect.right > rect.left and rect.bottom > rect.top:
+                return rect.left, rect.top, rect.right, rect.bottom
+        except Exception:
+            pass
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def force_visible(self) -> None:
+        try:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+            self._position()
+            hwnd = int(self.root.winfo_id())
+            hwnd_topmost = -1
+            swp_showwindow = 0x0040
+            swp_noownerzorder = 0x0200
+            ctypes.windll.user32.SetWindowPos(
+                hwnd,
+                hwnd_topmost,
+                self.root.winfo_x(),
+                self.root.winfo_y(),
+                self.current_width,
+                self.current_height,
+                swp_showwindow | swp_noownerzorder,
+            )
+            ctypes.windll.user32.BringWindowToTop(hwnd)
+        except Exception:
+            pass
+
+    def show(self) -> None:
+        self.root.after(0, self.force_visible)
+
+    def hide(self) -> None:
+        self.root.after(0, self.root.withdraw)
+
+    def _on_enter(self, _event: tk.Event | None = None) -> None:
+        self.hovered = True
+
+    def _on_leave(self, _event: tk.Event | None = None) -> None:
+        self.root.after(60, self._refresh_hover)
+
+    def _refresh_hover(self) -> None:
+        try:
+            pointer_x = self.root.winfo_pointerx()
+            pointer_y = self.root.winfo_pointery()
+            x = self.root.winfo_rootx()
+            y = self.root.winfo_rooty()
+            self.hovered = x <= pointer_x <= x + self.current_width and y <= pointer_y <= y + self.current_height
+        except Exception:
+            self.hovered = False
+
+    def _start_drag(self, event: tk.Event) -> None:
+        if self.fixed_position:
+            self._position()
+            return
+        self.drag_origin = (event.x, event.y)
+
+    def _drag(self, event: tk.Event) -> None:
+        if self.fixed_position:
+            return
+        if self.drag_origin is None:
+            return
+        dx = event.x - self.drag_origin[0]
+        dy = event.y - self.drag_origin[1]
+        x = self.root.winfo_x() + dx
+        y = self.root.winfo_y() + dy
+        self.root.geometry(f"+{x}+{y}")
+
+    def _end_drag(self, event: tk.Event) -> None:
+        self.drag_origin = None
+        if self.fixed_position:
+            self._position()
+
+    def set_state(self, state: str, message: str | None = None, preview: str | None = None) -> None:
+        self.root.after(0, lambda: self._set_state_now(state, message, preview))
+
+    def _set_state_now(self, state: str, message: str | None, preview: str | None) -> None:
+        self.state = state
+        if message is not None:
+            self.last_status = message[:160]
+        if preview is not None:
+            self.last_preview = preview[:240]
+        self._set_compact(state == "idle", animate=True)
+        self._schedule_idle_return(state)
+        self._repaint()
+
+    def _schedule_idle_return(self, state: str) -> None:
+        if self.idle_after_id:
+            try:
+                self.root.after_cancel(self.idle_after_id)
+            except Exception:
+                pass
+            self.idle_after_id = None
+
+        delay = 0
+        if state == "captured":
+            delay = self.result_hold_ms
+        elif state == "error":
+            delay = self.error_hold_ms
+
+        if delay > 0:
+            self.idle_after_id = self.root.after(delay, lambda expected=state: self._return_to_idle_if_same(expected))
+
+    def _return_to_idle_if_same(self, expected_state: str) -> None:
+        self.idle_after_id = None
+        if self.state != expected_state:
+            return
+        self._set_state_now(
+            "idle",
+            "Hold Ctrl+Win to talk. Toggle only with Ctrl+Win+Space or Mic.",
+            "Mic is off. Deepgram is idle.",
+        )
+
+    def set_level(self, level: float) -> None:
+        self.level = max(0.0, min(1.0, float(level)))
+
+    def _repaint(self) -> None:
+        self.container.configure(bg=TRANSPARENT_COLOR)
+        self.canvas.configure(bg=TRANSPARENT_COLOR)
+
+    def _animate(self) -> None:
+        tick_start = time.perf_counter()
+        self.phase = (self.phase + 1) % 1_000_000
+        live = self.state in LIVE_STATES
+        target_level = self.level if live else 0.0
+        self.display_level += (target_level - self.display_level) * (0.18 if live else 0.08)
+        self.hover_level += ((1.0 if self.hovered else 0.0) - self.hover_level) * 0.16
+        self._draw_visual()
+        delay = self.active_frame_ms if live else self.idle_frame_ms
+        elapsed_ms = int((time.perf_counter() - tick_start) * 1000)
+        self.last_animation_tick = tick_start
+        self.root.after(max(4, int(delay) - elapsed_ms), self._animate)
+
+    def _draw_visual(self) -> None:
+        width = max(1, int(self.current_width))
+        height = max(1, int(self.current_height))
+        self._draw_compact_reference_visual(width, height, active=not self.compact)
+
+    def _draw_compact_reference_visual(self, width: int, height: int, *, active: bool = False) -> None:
+        body_width = min(width, self.active_pill_width) if active else width
+        body_height = min(height, self.active_pill_height) if active else height
+        field = self._compact_wave_frame(body_width, body_height, active=active) or self._compact_reference_fallback(
+            body_width, body_height
+        )
+        idle_cache_key = None
+        active_cache_key = None
+        if active:
+            field = self._finish_compact_wave_frame(field, body_width, body_height, active=active)
+            if width != body_width or height != body_height:
+                field = self._compose_active_visual(field, width, height, body_width, body_height)
+        elif not active and self.hover_level < 0.01 and self.last_flow_render_key is not None:
+            idle_cache_key = (body_width, body_height, *self.last_flow_render_key)
+            cached = self.idle_render_cache.get(idle_cache_key)
+            if cached is not None:
+                field = cached
+            else:
+                field = self._finish_compact_wave_frame(field, body_width, body_height, active=active)
+                self.idle_render_cache[idle_cache_key] = field
+        else:
+            field = self._finish_compact_wave_frame(field, body_width, body_height, active=active)
+        cached_photo = None
+        if active_cache_key is not None:
+            cached_photo = self.active_photo_cache.get(active_cache_key)
+        elif idle_cache_key is not None:
+            cached_photo = self.idle_photo_cache.get(idle_cache_key)
+        if cached_photo is None:
+            cached_photo = ImageTk.PhotoImage(field)
+            if active_cache_key is not None:
+                self.active_photo_cache[active_cache_key] = cached_photo
+            elif idle_cache_key is not None:
+                self.idle_photo_cache[idle_cache_key] = cached_photo
+        self.visual_photo = cached_photo
+        if self.visual_canvas_item is None:
+            self.visual_canvas_item = int(
+                self.canvas.create_image(0, 0, image=self.visual_photo, anchor="nw", tags="visual")
+            )
+        else:
+            try:
+                self.canvas.itemconfigure(self.visual_canvas_item, image=self.visual_photo)
+                self.canvas.coords(self.visual_canvas_item, 0, 0)
+            except tk.TclError:
+                self.visual_canvas_item = int(
+                    self.canvas.create_image(0, 0, image=self.visual_photo, anchor="nw", tags="visual")
+                )
+
+    def _compact_wave_frame(self, width: int, height: int, *, active: bool = False) -> Image.Image | None:
+        flow_frame = self._flow_loop_frame(width, height, active=active)
+        if flow_frame is not None:
+            return flow_frame
+
+        strip = self.compact_wave_strip
+        if strip is None:
+            return None
+
+        frame_width = int(self.compact_wave_meta.get("frame_width", self.compact_width))
+        frame_height = int(self.compact_wave_meta.get("frame_height", self.compact_height))
+        columns = int(self.compact_wave_meta.get("columns", 1))
+        frame_count = int(self.compact_wave_meta.get("frame_count", 1))
+        fps = float(self.compact_wave_meta.get("fps", 24.0))
+        if frame_width <= 0 or frame_height <= 0 or columns <= 0 or frame_count <= 0:
+            return None
+
+        loop_start = int(self._clamp(self.wave_loop_start, 0, frame_count - 1))
+        loop_end = int(self._clamp(self.wave_loop_end, loop_start + 1, frame_count - 1))
+        segment_count = int(loop_end - loop_start + 1)
+        speed = 7.0 if active else 1.0
+        ticks_per_loop = max(1.0, (segment_count * (1000.0 / max(1.0, fps)) / 16.0) / speed)
+        frame_pos = ((self.phase % ticks_per_loop) / ticks_per_loop) * segment_count
+        frame = self._wave_frame_at(frame_pos, frame_width, frame_height, columns, frame_count, loop_start, segment_count)
+        if frame is None:
+            return None
+
+        if frame.size != (width, height):
+            frame = frame.resize((width, height), Image.Resampling.LANCZOS)
+        return frame
+
+    def _flow_loop_frame(self, width: int, height: int, *, active: bool = False) -> Image.Image | None:
+        strip = self.flow_loop_strip
+        if strip is None:
+            return None
+
+        frame_width = int(self.flow_loop_meta.get("frame_width", self.active_pill_width))
+        frame_height = int(self.flow_loop_meta.get("frame_height", self.active_pill_height))
+        columns = int(self.flow_loop_meta.get("columns", 1))
+        frame_count = int(self.flow_loop_meta.get("frame_count", 1))
+        if frame_width <= 0 or frame_height <= 0 or columns <= 0 or frame_count <= 0:
+            return None
+
+        elapsed = max(0.0, time.perf_counter() - self.started_at)
+        loop_seconds = max(0.10, self.active_loop_seconds if active else self.idle_loop_seconds)
+        frame_pos = (elapsed / loop_seconds) * frame_count
+
+        if (width, height) in {
+            (self.compact_width, self.compact_height),
+            (self.active_pill_width, self.active_pill_height),
+        }:
+            first_index = int(math.floor(frame_pos)) % frame_count
+            second_index = (first_index + 1) % frame_count
+            first = self._flow_cached_frame_for_size(first_index, width, height, frame_width, frame_height, columns)
+            second = self._flow_cached_frame_for_size(second_index, width, height, frame_width, frame_height, columns)
+            if first is None or second is None:
+                return None
+            alpha = self._smoothstep(0.0, 1.0, frame_pos - math.floor(frame_pos))
+            if not active:
+                alpha_steps = 6
+                alpha_bucket = int(round(alpha * alpha_steps))
+                if alpha_bucket <= 0:
+                    self.last_flow_render_key = (first_index, 0)
+                    return first
+                if alpha_bucket >= alpha_steps:
+                    self.last_flow_render_key = (second_index, 0)
+                    return second
+                self.last_flow_render_key = (first_index, alpha_bucket)
+                return Image.blend(first, second, alpha_bucket / alpha_steps)
+            else:
+                alpha_steps = 16
+                alpha_bucket = int(round(alpha * alpha_steps))
+                self.last_flow_render_key = (first_index, alpha_bucket)
+                return Image.blend(first, second, alpha)
+
+        self.last_flow_render_key = None
+        frame = self._loop_frame_at(strip, frame_pos, frame_width, frame_height, columns, frame_count)
+        if frame is None:
+            return None
+        if frame.size != (width, height):
+            frame = frame.resize((width, height), Image.Resampling.LANCZOS)
+        return frame
+
+    def _clean_loop_frame_count(self, frame_count: int) -> int:
+        source = str(self.flow_loop_meta.get("source", "")).lower()
+        if self.flow_loop_meta.get("transparent_background") or "seamless" in source:
+            return frame_count
+        bridge_start = int(self.flow_loop_meta.get("bridge_start_frame", frame_count))
+        if 16 <= bridge_start < frame_count:
+            return bridge_start
+        return frame_count
+
+    def _pingpong_frame_position(self, elapsed: float, loop_seconds: float, frame_count: int) -> float:
+        if frame_count <= 1:
+            return 0.0
+        cycle = float((frame_count - 1) * 2)
+        position = ((elapsed / max(0.10, loop_seconds)) * cycle) % cycle
+        if position <= frame_count - 1:
+            return position
+        return cycle - position
+
+    def _flow_cached_frame_for_size(
+        self,
+        index: int,
+        width: int,
+        height: int,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+    ) -> Image.Image | None:
+        key = (width, height, index)
+        cached = self.flow_single_frame_cache.get(key)
+        if cached is not None:
+            return cached
+        strip = self.flow_loop_strip
+        if strip is None:
+            return None
+        frame = self._strip_frame_from(strip, index, frame_width, frame_height, columns)
+        if frame is None:
+            return None
+        if frame.size != (width, height):
+            frame = frame.resize((width, height), Image.Resampling.LANCZOS)
+        if len(self.flow_single_frame_cache) > 760:
+            self.flow_single_frame_cache.clear()
+        self.flow_single_frame_cache[key] = frame
+        return frame
+
+    def _flow_frames_for_size(
+        self,
+        width: int,
+        height: int,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+        frame_count: int,
+    ) -> list[Image.Image] | None:
+        if (width, height) not in {
+            (self.compact_width, self.compact_height),
+            (self.active_pill_width, self.active_pill_height),
+        }:
+            return None
+        key = (width, height)
+        cached = self.flow_frame_cache.get(key)
+        if cached is not None:
+            return cached
+        strip = self.flow_loop_strip
+        if strip is None:
+            return None
+        frames: list[Image.Image] = []
+        for index in range(frame_count):
+            frame = self._strip_frame_from(strip, index, frame_width, frame_height, columns)
+            if frame is None:
+                return None
+            if frame.size != (width, height):
+                frame = frame.resize((width, height), Image.Resampling.LANCZOS)
+            frames.append(frame)
+        self.flow_frame_cache[key] = frames
+        return frames
+
+    def _loop_frame_at(
+        self,
+        strip: Image.Image,
+        frame_pos: float,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+        frame_count: int,
+    ) -> Image.Image | None:
+        first_index = int(math.floor(frame_pos)) % frame_count
+        second_index = (first_index + 1) % frame_count
+        alpha = self._smoothstep(0.0, 1.0, frame_pos - math.floor(frame_pos))
+        first = self._strip_frame_from(strip, first_index, frame_width, frame_height, columns)
+        second = self._strip_frame_from(strip, second_index, frame_width, frame_height, columns)
+        if first is None or second is None:
+            return None
+        return Image.blend(first, second, alpha)
+
+    def _source_frame_at(
+        self,
+        strip: Image.Image,
+        frame_pos: float,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+        frame_count: int,
+    ) -> Image.Image | None:
+        first_index = max(0, min(frame_count - 1, int(math.floor(frame_pos))))
+        second_index = min(frame_count - 1, first_index + 1)
+        alpha = self._smoothstep(0.0, 1.0, frame_pos - math.floor(frame_pos))
+        first = self._strip_frame_from(strip, first_index, frame_width, frame_height, columns)
+        second = self._strip_frame_from(strip, second_index, frame_width, frame_height, columns)
+        if first is None or second is None:
+            return None
+        return Image.blend(first, second, alpha)
+
+    def _strip_frame_from(
+        self,
+        strip: Image.Image,
+        index: int,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+    ) -> Image.Image | None:
+        column = index % columns
+        row = index // columns
+        left = column * frame_width
+        top = row * frame_height
+        if left + frame_width > strip.width or top + frame_height > strip.height:
+            return None
+        return strip.crop((left, top, left + frame_width, top + frame_height))
+
+    def _wave_frame_at(
+        self,
+        frame_pos: float,
+        frame_width: int,
+        frame_height: int,
+        columns: int,
+        frame_count: int,
+        loop_start: int = 0,
+        segment_count: int | None = None,
+    ) -> Image.Image | None:
+        strip = self.compact_wave_strip
+        if strip is None:
+            return None
+        segment = max(1, segment_count if segment_count is not None else frame_count)
+        first_local = int(math.floor(frame_pos)) % segment
+        second_local = (first_local + 1) % segment
+        first_index = min(frame_count - 1, loop_start + first_local)
+        second_index = min(frame_count - 1, loop_start + second_local)
+        alpha = self._smoothstep(0.0, 1.0, frame_pos - math.floor(frame_pos))
+        first = self._strip_frame(first_index, frame_width, frame_height, columns)
+        second = self._strip_frame(second_index, frame_width, frame_height, columns)
+        if first is None or second is None:
+            return None
+        return Image.blend(first, second, alpha)
+
+    def _strip_frame(self, index: int, frame_width: int, frame_height: int, columns: int) -> Image.Image | None:
+        strip = self.compact_wave_strip
+        if strip is None:
+            return None
+        column = index % columns
+        row = index // columns
+        left = column * frame_width
+        top = row * frame_height
+        if left + frame_width > strip.width or top + frame_height > strip.height:
+            return None
+        return strip.crop((left, top, left + frame_width, top + frame_height))
+
+    def _compact_reference_fallback(self, width: int, height: int) -> Image.Image:
+        if self.compact_wave_reference is not None:
+            return self.compact_wave_reference.resize((width, height), Image.Resampling.LANCZOS)
+
+        scale = 2
+        scaled_w = max(2, width * scale)
+        scaled_h = max(2, height * scale)
+        phase = self.phase / 18.0
+
+        field = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        pixels = field.load()
+        for y_index in range(scaled_h):
+            y = y_index / max(1, scaled_h - 1)
+            for x_index in range(scaled_w):
+                x = x_index / max(1, scaled_w - 1)
+                r, g, b = self._reference_pixel_rgb(x, y, phase)
+                pixels[x_index, y_index] = (r, g, b, 255)
+
+        ribs = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        rib_draw = ImageDraw.Draw(ribs)
+        glow = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow)
+        pitch = max(10, int(10.5 * scale))
+        offset = int((phase * 2.4) % pitch)
+        for x_index in range(-pitch + offset, scaled_w + pitch, pitch):
+            t = self._clamp(x_index / max(1, scaled_w - 1), 0.0, 1.0)
+            color = self._reference_pill_rgb(t)
+            hot = self._mix_rgb(color, (255, 245, 180), 0.55 if t < 0.78 else 0.28)
+            shadow_alpha = 84 if t < 0.75 else 118
+            rib_draw.rectangle(
+                (x_index - int(3.5 * scale), 0, x_index - int(1.0 * scale), scaled_h),
+                fill=(0, 12, 16, shadow_alpha),
+            )
+            glow_draw.rectangle(
+                (x_index - int(2.5 * scale), 0, x_index + int(2.5 * scale), scaled_h),
+                fill=(*hot, 108),
+            )
+            rib_draw.line((x_index, 0, x_index, scaled_h), fill=(*hot, 220), width=max(1, scale))
+            rib_draw.line(
+                (x_index + int(1.6 * scale), 0, x_index + int(1.6 * scale), scaled_h),
+                fill=(*self._mix_rgb(color, (255, 255, 255), 0.18), 92),
+                width=max(1, scale),
+            )
+
+        field = Image.alpha_composite(field, glow.filter(ImageFilter.GaussianBlur(radius=2.2 * scale)))
+        field = Image.alpha_composite(field, ribs)
+
+        sheen = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        sheen_draw = ImageDraw.Draw(sheen)
+        sweep_x = int(((phase * 16) % (scaled_w + 80 * scale)) - 40 * scale)
+        sheen_draw.rectangle(
+            (sweep_x - 8 * scale, int(4 * scale), sweep_x + 11 * scale, scaled_h - int(4 * scale)),
+            fill=(255, 226, 142, 42),
+        )
+        field = Image.alpha_composite(field, sheen.filter(ImageFilter.GaussianBlur(radius=4.0 * scale)))
+
+        return field.resize((width, height), Image.Resampling.LANCZOS)
+
+    def _finish_compact_wave_frame(self, field: Image.Image, width: int, height: int, *, active: bool = False) -> Image.Image:
+        if field.mode != "RGBA":
+            field = field.convert("RGBA")
+        if field.size != (width, height):
+            field = field.resize((width, height), Image.Resampling.LANCZOS)
+
+        hover = self.hover_level
+        active_level = 1.0 if active else 0.0
+        voice_level = self._clamp(self.display_level, 0.0, 1.0) if active else 0.0
+        pulse = 0.5 + 0.5 * math.sin(self.phase / 12.0)
+        field = ImageEnhance.Color(field).enhance(1.08 + active_level * 0.18 + voice_level * 0.18 + hover * 0.08)
+        field = ImageEnhance.Contrast(field).enhance(
+            1.06 + active_level * 0.10 + voice_level * 0.08 + hover * 0.04
+        )
+        field = ImageEnhance.Brightness(field).enhance(
+            1.00 + active_level * (0.06 + pulse * 0.025) + voice_level * 0.13 + hover * 0.05
+        )
+
+        soft = field.filter(ImageFilter.GaussianBlur(radius=0.45))
+        field = Image.blend(field, soft, 0.12 if active else 0.22)
+
+        if active:
+            shine = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            shine_draw = ImageDraw.Draw(shine)
+            colors = [(255, 68, 105), (255, 218, 112), (35, 225, 187), (78, 148, 255)]
+            for index, color in enumerate(colors):
+                cx = width * (0.16 + index * 0.24 + 0.04 * math.sin(self.phase / 17.0 + index * 1.7))
+                cy = height * (0.52 + 0.18 * math.sin(self.phase / 21.0 + index * 1.2))
+                rx = width * (0.28 + 0.04 * math.sin(self.phase / 25.0 + index))
+                ry = height * (0.90 + 0.10 * math.cos(self.phase / 19.0 + index))
+                alpha = int(12 + pulse * 7 + voice_level * 28)
+                shine_draw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=(*color, alpha))
+            shine = shine.filter(ImageFilter.GaussianBlur(radius=max(3, int(height * 0.16))))
+            field = Image.alpha_composite(field, shine)
+
+        glass = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        glass_draw = ImageDraw.Draw(glass)
+        radius = max(1, height // 2)
+        glow_alpha = int(18 + active_level * (24 + pulse * 8) + voice_level * 36 + hover * 26)
+        outer_alpha = int((10 if active else 46) + voice_level * 16 + hover * 18)
+        inner_alpha = int((0 if active else 22) + voice_level * 6)
+        if outer_alpha > 0:
+            glass_draw.rounded_rectangle(
+                (1, 1, width - 2, height - 2),
+                radius=max(1, radius - 1),
+                outline=(255, 220, 132, outer_alpha),
+                width=1,
+            )
+        if inner_alpha > 0:
+            glass_draw.rounded_rectangle(
+                (3, 3, width - 4, height - 4),
+                radius=max(1, radius - 4),
+                outline=(8, 52, 50, inner_alpha),
+                width=1,
+            )
+
+        sheen = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        sheen_draw = ImageDraw.Draw(sheen)
+        cool_alpha = int(active_level * (5 + pulse * 3) + voice_level * 18)
+        for y_index in range(height):
+            y_t = y_index / max(1, height - 1)
+            top_fade = 1.0 - self._smoothstep(0.08, 0.58, y_t)
+            bottom_fade = self._smoothstep(0.52, 0.92, y_t) * (1.0 - self._smoothstep(0.92, 1.0, y_t))
+            top_alpha = int(glow_alpha * top_fade)
+            bottom_alpha = int(cool_alpha * bottom_fade)
+            if top_alpha > 0:
+                sheen_draw.line((5, y_index, width - 6, y_index), fill=(255, 237, 177, top_alpha))
+            if bottom_alpha > 0:
+                sheen_draw.line((6, y_index, width - 7, y_index), fill=(22, 255, 201, bottom_alpha))
+        glass = Image.alpha_composite(glass, sheen)
+        glass = glass.filter(ImageFilter.GaussianBlur(radius=1.0 if active else 0.8))
+        field = Image.alpha_composite(field, glass)
+
+        mask = self._compact_mask(width, height)
+        keyed = Image.new("RGBA", (width, height), (*self._rgb(TRANSPARENT_COLOR), 255))
+        keyed.paste(field, (0, 0), mask)
+        return keyed.convert("RGB")
+
+    def _compose_active_visual(
+        self,
+        body: Image.Image,
+        width: int,
+        height: int,
+        body_width: int,
+        body_height: int,
+    ) -> Image.Image:
+        key_rgb = self._rgb(TRANSPARENT_COLOR)
+        full = Image.new("RGB", (width, height), key_rgb)
+        body_x = max(0, (width - body_width) // 2)
+        body_y = max(0, (height - body_height) // 2)
+
+        mask = Image.new("L", (width, height), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle(
+            (body_x, body_y, body_x + body_width - 1, body_y + body_height - 1),
+            radius=max(1, body_height // 2),
+            fill=255,
+        )
+        blurred = mask.filter(ImageFilter.GaussianBlur(radius=max(2.0, body_height * 0.14)))
+        halo_mask = blurred.point(lambda value: int(value * 0.34))
+
+        halo = Image.new("RGB", (width, height), key_rgb)
+        halo_draw = ImageDraw.Draw(halo)
+        pulse = 0.5 + 0.5 * math.sin(self.phase / 8.0)
+        for x_index in range(width):
+            x_t = (x_index / max(1, width - 1) + self.phase / 180.0) % 1.0
+            ruby = (255, 54, 88)
+            gold = (255, 218, 106)
+            teal = (31, 229, 190)
+            blue = (82, 157, 255)
+            if x_t < 0.28:
+                color = self._mix_rgb(ruby, gold, x_t / 0.28)
+            elif x_t < 0.58:
+                color = self._mix_rgb(gold, teal, (x_t - 0.28) / 0.30)
+            else:
+                color = self._mix_rgb(teal, blue, (x_t - 0.58) / 0.42)
+            halo_draw.line(
+                (x_index, 0, x_index, height),
+                fill=self._mix_rgb(color, (255, 246, 194), 0.22 + 0.18 * pulse),
+            )
+
+        full.paste(halo, (0, 0), halo_mask)
+
+        body_mask = self._compact_mask(body_width, body_height)
+        full.paste(body.convert("RGB"), (body_x, body_y), body_mask)
+        return full
+
+    def _compact_mask(self, width: int, height: int) -> Image.Image:
+        key = (width, height)
+        mask = self.compact_mask_cache.get(key)
+        if mask is not None:
+            return mask
+        mask = Image.new("L", (width, height), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=max(1, height // 2), fill=255)
+        self.compact_mask_cache[key] = mask
+        return mask
+
+    def _reference_pixel_rgb(self, x: float, y: float, phase: float) -> tuple[int, int, int]:
+        teal = self._smoothstep(0.40, 0.96, x)
+        warm = 1.0 - self._smoothstep(0.46, 0.98, x)
+        base = self._mix_rgb((16, 60, 57), (6, 38, 45), teal)
+
+        red_center = 0.67 - 0.28 * x + 0.045 * math.sin(phase * 0.55 + x * 9.0)
+        red = math.exp(-((y - red_center) ** 2) / 0.035) * warm
+        red += 0.42 * math.exp(-((x - 0.22) ** 2) / 0.040) * math.exp(-((y - 0.44) ** 2) / 0.090)
+
+        gold_center = 0.46 + 0.12 * math.sin(phase * 0.32 + x * 7.0)
+        gold = math.exp(-((x - 0.53) ** 2) / 0.055) * math.exp(-((y - gold_center) ** 2) / 0.150)
+        gold += warm * self._smoothstep(0.52, 1.0, y) * 0.62
+
+        cream_center = 0.24 + 0.30 * x + 0.06 * math.sin(phase * 0.45 + x * 11.0)
+        cream = math.exp(-((y - cream_center) ** 2) / 0.080) * (1.0 - self._smoothstep(0.34, 0.80, x))
+        left_glow = (1.0 - self._smoothstep(0.02, 0.22, x)) * 0.56
+
+        result = base
+        result = self._mix_rgb(result, (255, 224, 126), self._clamp(left_glow + gold * 0.55, 0.0, 0.92))
+        result = self._mix_rgb(result, (255, 31, 66), self._clamp(red * 0.88, 0.0, 0.90))
+        result = self._mix_rgb(result, (255, 199, 103), self._clamp(gold * 0.74 + cream * 0.58, 0.0, 0.88))
+        result = self._mix_rgb(result, (18, 138, 119), self._clamp(teal * 0.44, 0.0, 0.55))
+        result = self._mix_rgb(result, (5, 28, 39), self._clamp(self._smoothstep(0.78, 1.0, x) * 0.58, 0.0, 0.70))
+        return result
+
+    def _reference_pill_rgb(self, t: float) -> tuple[int, int, int]:
+        stops = [
+            (0.0, (255, 228, 132)),
+            (0.14, (255, 38, 67)),
+            (0.34, (156, 8, 35)),
+            (0.53, (255, 214, 113)),
+            (0.68, (255, 178, 91)),
+            (0.82, (30, 181, 139)),
+            (1.0, (7, 76, 70)),
+        ]
+        for (left_t, left_color), (right_t, right_color) in zip(stops, stops[1:]):
+            if left_t <= t <= right_t:
+                local = (t - left_t) / max(0.001, right_t - left_t)
+                return self._mix_rgb(left_color, right_color, local)
+        return stops[-1][1]
+
+    def _mix_rgb(self, left: tuple[int, int, int], right: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+        amount = self._clamp(amount, 0.0, 1.0)
+        return (
+            int(left[0] + (right[0] - left[0]) * amount),
+            int(left[1] + (right[1] - left[1]) * amount),
+            int(left[2] + (right[2] - left[2]) * amount),
+        )
+
+    def _smoothstep(self, edge0: float, edge1: float, value: float) -> float:
+        x = self._clamp((value - edge0) / max(0.0001, edge1 - edge0), 0.0, 1.0)
+        return x * x * (3 - 2 * x)
+
+    def _clamp(self, value: float, low: float, high: float) -> float:
+        return max(low, min(high, value))
+
+    def _rgb(self, color: str) -> tuple[int, int, int]:
+        value = color.lstrip("#")
+        return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+    def _open_context_menu_from_event(self, event: tk.Event | None = None) -> str:
+        x = int(getattr(event, "x_root", self.root.winfo_rootx() + self.current_width // 2))
+        y = int(getattr(event, "y_root", self.root.winfo_rooty()))
+        self._open_context_menu(x, y)
+        return "break"
+
+    def _open_context_menu(self, x_root: int, y_root: int) -> None:
+        self._close_context_menu()
+        width = 260
+        height = 126
+        window = tk.Toplevel(self.root)
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.attributes("-alpha", 0.98)
+        window.configure(bg=TRANSPARENT_COLOR)
+        try:
+            window.attributes("-transparentcolor", TRANSPARENT_COLOR)
+        except Exception:
+            pass
+
+        left, top, right, bottom = self._logical_work_area()
+        x = min(max(left + 8, x_root - width + 18), right - width - 8)
+        preferred_y = y_root - height - 12
+        y = preferred_y if preferred_y > top + 8 else min(bottom - height - 8, y_root + 12)
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        canvas = tk.Canvas(window, width=width, height=height, bg=TRANSPARENT_COLOR, bd=0, highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+        self.context_menu_window = window
+        self.context_menu_canvas = canvas
+        self.context_menu_hover = ""
+
+        window.bind("<Escape>", lambda _event: self._close_context_menu())
+        window.bind("<FocusOut>", lambda _event: window.after(80, self._close_context_menu))
+        window.bind("<Destroy>", lambda event: self._forget_context_menu(event), add="+")
+        canvas.bind("<Motion>", self._context_menu_motion)
+        canvas.bind("<Leave>", self._context_menu_leave)
+        canvas.bind("<Button-1>", self._context_menu_click)
+        canvas.bind("<Button-3>", lambda _event: self._close_context_menu())
+
+        window.update_idletasks()
+        self._apply_window_region(window, width, height, 22)
+        self._draw_context_menu()
+        window.after(30, window.focus_force)
+        self._animate_context_menu()
+
+    def _forget_context_menu(self, event: tk.Event | None = None) -> None:
+        if event is not None and event.widget is not self.context_menu_window:
+            return
+        self.context_menu_window = None
+        self.context_menu_canvas = None
+        self.context_menu_photo = None
+        self.context_menu_hover = ""
+        self.context_menu_after_id = None
+
+    def _close_context_menu(self) -> None:
+        if self.context_menu_after_id and self.context_menu_window is not None:
+            try:
+                self.context_menu_window.after_cancel(self.context_menu_after_id)
+            except Exception:
+                pass
+        window = self.context_menu_window
+        self.context_menu_after_id = None
+        self.context_menu_window = None
+        self.context_menu_canvas = None
+        self.context_menu_photo = None
+        self.context_menu_hover = ""
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _context_menu_motion(self, event: tk.Event) -> None:
+        action = self._context_menu_action_at(int(event.y))
+        if action != self.context_menu_hover:
+            self.context_menu_hover = action
+            self._draw_context_menu()
+
+    def _context_menu_leave(self, _event: tk.Event | None = None) -> None:
+        if self.context_menu_hover:
+            self.context_menu_hover = ""
+            self._draw_context_menu()
+
+    def _context_menu_click(self, event: tk.Event) -> str:
+        action = self._context_menu_action_at(int(event.y))
+        self._close_context_menu()
+        if action == "settings":
+            self.open_settings()
+        elif action == "history":
+            self.open_history()
+        return "break"
+
+    def _context_menu_action_at(self, y: int) -> str:
+        if 14 <= y <= 60:
+            return "settings"
+        if 68 <= y <= 112:
+            return "history"
+        return ""
+
+    def _animate_context_menu(self) -> None:
+        if self.context_menu_window is None or self.context_menu_canvas is None:
+            return
+        self._draw_context_menu()
+        self.context_menu_after_id = self.context_menu_window.after(34, self._animate_context_menu)
+
+    def _draw_context_menu(self) -> None:
+        canvas = self.context_menu_canvas
+        if canvas is None:
+            return
+        width = int(canvas.winfo_width())
+        height = int(canvas.winfo_height())
+        if width <= 1:
+            width = int(float(canvas.cget("width") or 260))
+        if height <= 1:
+            height = int(float(canvas.cget("height") or 126))
+        width = max(1, width)
+        height = max(1, height)
+        image = self._context_menu_background(width, height, self.context_menu_hover)
+        self.context_menu_photo = ImageTk.PhotoImage(image)
+        canvas.delete("all")
+        canvas.create_image(0, 0, image=self.context_menu_photo, anchor="nw")
+        settings_active = self.context_menu_hover == "settings"
+        history_active = self.context_menu_hover == "history"
+        self._draw_gear_icon(canvas, 36, 38, settings_active)
+        self._draw_history_icon(canvas, 36, 90, history_active)
+        canvas.create_text(
+            62,
+            31,
+            text="Settings",
+            anchor="w",
+            fill="#fff4d0" if settings_active else "#edf7f3",
+            font=("Segoe UI Semibold", 11),
+        )
+        canvas.create_text(
+            62,
+            47,
+            text="All controls",
+            anchor="w",
+            fill="#b7cbc7" if settings_active else "#7f9693",
+            font=("Segoe UI", 8),
+        )
+        canvas.create_text(
+            62,
+            83,
+            text="History",
+            anchor="w",
+            fill="#fff4d0" if history_active else "#edf7f3",
+            font=("Segoe UI Semibold", 11),
+        )
+        canvas.create_text(
+            62,
+            99,
+            text="Full text archive",
+            anchor="w",
+            fill="#b7cbc7" if history_active else "#7f9693",
+            font=("Segoe UI", 8),
+        )
+
+    def _context_menu_background(self, width: int, height: int, hover: str) -> Image.Image:
+        key_rgb = self._rgb(TRANSPARENT_COLOR)
+        field = self._compact_wave_frame(width, height, active=True) or self._compact_reference_fallback(width, height)
+        if field.mode != "RGBA":
+            field = field.convert("RGBA")
+        field = ImageEnhance.Color(field).enhance(1.25)
+        field = ImageEnhance.Contrast(field).enhance(1.08)
+        field = field.filter(ImageFilter.GaussianBlur(radius=1.0))
+
+        panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        mask = Image.new("L", (width, height), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=22, fill=255)
+        panel.paste(field, (0, 0), mask)
+
+        veil = Image.new("RGBA", (width, height), (3, 15, 18, 174))
+        panel = Image.alpha_composite(panel, veil)
+        draw = ImageDraw.Draw(panel)
+        pulse = 0.5 + 0.5 * math.sin(self.phase / 12.0)
+        for name, top in (("settings", 13), ("history", 67)):
+            active = hover == name
+            fill = (255, 215, 124, int(28 + pulse * 12)) if active else (255, 255, 255, 8)
+            outline = (47, 255, 210, int(80 + pulse * 40)) if active else (255, 226, 148, 28)
+            draw.rounded_rectangle((10, top, width - 10, top + 47), radius=17, fill=fill, outline=outline, width=1)
+        draw.rounded_rectangle(
+            (1, 1, width - 2, height - 2),
+            radius=22,
+            outline=(43, 245, 204, int(90 + pulse * 36)),
+            width=1,
+        )
+        draw.rounded_rectangle((4, 4, width - 5, 44), radius=18, fill=(255, 237, 177, 18))
+
+        halo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        halo_draw = ImageDraw.Draw(halo)
+        halo_draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=22, outline=(255, 198, 108, 94), width=2)
+        panel = Image.alpha_composite(panel, halo.filter(ImageFilter.GaussianBlur(radius=2.2)))
+        keyed = Image.new("RGBA", (width, height), (*key_rgb, 255))
+        keyed.paste(panel, (0, 0), panel.split()[-1])
+        return keyed.convert("RGB")
+
+    def _draw_gear_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        for index in range(8):
+            angle = math.tau * index / 8.0
+            x1 = cx + math.cos(angle) * 9
+            y1 = cy + math.sin(angle) * 9
+            x2 = cx + math.cos(angle) * 13
+            y2 = cy + math.sin(angle) * 13
+            canvas.create_line(x1, y1, x2, y2, fill=color, width=2, capstyle="round")
+        canvas.create_oval(cx - 10, cy - 10, cx + 10, cy + 10, outline=color, width=2)
+        canvas.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, outline=color, width=2)
+
+    def _draw_history_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        canvas.create_arc(cx - 14, cy - 14, cx + 14, cy + 14, start=42, extent=286, style="arc", outline=color, width=2)
+        canvas.create_line(cx - 11, cy - 8, cx - 16, cy - 8, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx - 11, cy - 8, cx - 11, cy - 13, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx, cy, cx, cy - 8, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx, cy, cx + 7, cy + 4, fill=color, width=2, capstyle="round")
+
+    def _focus_utility_window(self, name: str) -> bool:
+        window = self.utility_windows.get(name)
+        if not window:
+            return False
+        try:
+            if not window.winfo_exists():
+                self.utility_windows.pop(name, None)
+                return False
+            window.deiconify()
+            window.attributes("-topmost", True)
+            window.lift()
+            window.focus_force()
+            return True
+        except tk.TclError:
+            self.utility_windows.pop(name, None)
+            return False
+
+    def _parse_geometry_size(self, geometry: str) -> tuple[int, int]:
+        raw = str(geometry).split("+", 1)[0].strip()
+        if "x" not in raw:
+            return 720, 520
+        left, right = raw.lower().split("x", 1)
+        try:
+            return max(280, int(left)), max(180, int(right))
+        except ValueError:
+            return 720, 520
+
+    def _utility_geometry(self, geometry: str) -> str:
+        width, height = self._parse_geometry_size(geometry)
+        left, top, right, bottom = self._logical_work_area()
+        x = left + max(8, ((right - left) - width) // 2)
+        y = top + max(8, ((bottom - top) - height) // 2)
+        return f"{width}x{height}+{x}+{y}"
+
+    def _apply_glass_effect(self, window: tk.Toplevel, bg: str) -> None:
+        window.configure(bg=bg)
+        try:
+            window.attributes("-alpha", 0.965)
+        except Exception:
+            pass
+        try:
+            window.attributes("-toolwindow", True)
+        except Exception:
+            pass
+        try:
+            hwnd = int(window.winfo_id())
+            dwm = ctypes.windll.dwmapi
+            enabled = ctypes.c_int(1)
+            dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(enabled), ctypes.sizeof(enabled))
+            backdrop = ctypes.c_int(3)
+            dwm.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop))
+        except Exception:
+            pass
+
+    def _bind_utility_drag_handle(self, window: tk.Toplevel, *widgets: tk.Widget) -> None:
+        def press(event: tk.Event) -> None:
+            self.utility_drag_origin = (
+                int(getattr(event, "x_root", window.winfo_pointerx())),
+                int(getattr(event, "y_root", window.winfo_pointery())),
+                int(window.winfo_x()),
+                int(window.winfo_y()),
+            )
+
+        def drag(event: tk.Event) -> None:
+            if self.utility_drag_origin is None:
+                return
+            start_x, start_y, window_x, window_y = self.utility_drag_origin
+            pointer_x = int(getattr(event, "x_root", window.winfo_pointerx()))
+            pointer_y = int(getattr(event, "y_root", window.winfo_pointery()))
+            window.geometry(f"+{window_x + pointer_x - start_x}+{window_y + pointer_y - start_y}")
+
+        def release(_event: tk.Event) -> None:
+            self.utility_drag_origin = None
+
+        for widget in widgets:
+            widget.bind("<ButtonPress-1>", press, add="+")
+            widget.bind("<B1-Motion>", drag, add="+")
+            widget.bind("<ButtonRelease-1>", release, add="+")
+
+    def _make_glass_titlebar(self, window: tk.Toplevel, title: str, bg: str, fg: str = "#eef8f3") -> tk.Frame:
+        bar = tk.Frame(window, bg=bg, height=44, bd=0, highlightthickness=0)
+        bar.pack(fill="x", padx=14, pady=(12, 0))
+        label = tk.Label(
+            bar,
+            text=title,
+            bg=bg,
+            fg=fg,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        )
+        label.pack(side="left", fill="x", expand=True)
+        close = tk.Button(
+            bar,
+            text="X",
+            command=window.destroy,
+            bg="#16282d",
+            fg="#f5e7bd",
+            activebackground="#22413f",
+            activeforeground="#ffffff",
+            bd=0,
+            highlightthickness=0,
+            font=("Segoe UI Semibold", 9),
+            width=3,
+            cursor="hand2",
+        )
+        close.pack(side="right", padx=(8, 0))
+        self._bind_utility_drag_handle(window, bar, label)
+        return bar
+
+    def _utility_window(self, name: str, title: str, geometry: str, *, bg: str) -> tk.Toplevel | None:
+        if self._focus_utility_window(name):
+            return None
+        window = tk.Toplevel(self.root)
+        window.title(title)
+        window.overrideredirect(True)
+        window.geometry(self._utility_geometry(geometry))
+        window.resizable(False, False)
+        self._apply_glass_effect(window, bg)
+        try:
+            self._style_settings_widgets(window, self._settings_palette(self.config.get("ui", {}).get("theme", "dark")))
+        except Exception:
+            pass
+        window.attributes("-topmost", True)
+        self.utility_windows[name] = window
+
+        def forget(event: tk.Event | None = None) -> None:
+            if event is not None and event.widget is not window:
+                return
+            self.utility_windows.pop(name, None)
+
+        window.bind("<Destroy>", forget, add="+")
+        window.bind("<Escape>", lambda _event: window.destroy(), add="+")
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+        try:
+            window.iconbitmap(str(ensure_icon_file()))
+        except Exception:
+            pass
+        def apply_region_once() -> None:
+            try:
+                window.update_idletasks()
+                self._apply_window_region(window, window.winfo_width(), window.winfo_height(), 28)
+            except Exception:
+                pass
+
+        window.after(80, apply_region_once)
+        return window
+
+    def _open_settings_legacy(self) -> None:
+        self.force_visible()
+        window = self._utility_window("settings", "Talk Dat Shi Settings", "820x680", bg="#f5f6f8")
+        if window is None:
+            return
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+
+        notebook = ttk.Notebook(window)
+        notebook.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        general = ttk.Frame(notebook, padding=14)
+        dictation = ttk.Frame(notebook, padding=14)
+        hotkeys_tab = ttk.Frame(notebook, padding=14)
+        dictionary_tab = ttk.Frame(notebook, padding=14)
+        snippets_tab = ttk.Frame(notebook, padding=14)
+        transforms_tab = ttk.Frame(notebook, padding=14)
+        notebook.add(general, text="General")
+        notebook.add(dictation, text="Dictation")
+        notebook.add(hotkeys_tab, text="Hotkeys")
+        notebook.add(dictionary_tab, text="Dictionary")
+        notebook.add(snippets_tab, text="Snippets")
+        notebook.add(transforms_tab, text="Transforms")
+
+        def add_row(parent: ttk.Frame, row: int, label: str, widget: tk.Widget) -> None:
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
+            widget.grid(row=row, column=1, sticky="ew", pady=5)
+            parent.columnconfigure(1, weight=1)
+
+        deepgram = self.config.setdefault("deepgram", {})
+        cleanup = self.config.setdefault("cleanup", {})
+        privacy = self.config.setdefault("privacy", {})
+        dictation_config = self.config.setdefault("dictation", {})
+        transforms = self.config.setdefault("transforms", {})
+        ollama = transforms.setdefault("ollama", {})
+
+        key_var = tk.StringVar(value=str(self.config.get("deepgram", {}).get("api_key", "")))
+        key_entry = ttk.Entry(general, textvariable=key_var, show="*", width=70)
+        add_row(general, 0, "Deepgram API key", key_entry)
+
+        model_var = tk.StringVar(value=str(deepgram.get("model", "nova-3")))
+        model_options = [
+            "nova-3",
+            "nova-3-general",
+            "nova-3-medical",
+            "nova-2",
+            "nova-2-general",
+            "nova-2-meeting",
+            "nova-2-phonecall",
+            "nova-2-finance",
+            "nova-2-conversationalai",
+            "nova-2-voicemail",
+            "nova-2-video",
+            "nova-2-medical",
+            "nova-2-drivethru",
+            "nova-2-automotive",
+            "nova-2-atc",
+            "enhanced",
+            "enhanced-general",
+            "enhanced-meeting",
+            "enhanced-phonecall",
+            "enhanced-finance",
+            "base",
+            "base-general",
+            "base-meeting",
+            "base-phonecall",
+            "base-finance",
+            "base-conversationalai",
+            "base-voicemail",
+            "base-video",
+            "whisper",
+            "whisper-tiny",
+            "whisper-base",
+            "whisper-small",
+            "whisper-medium",
+            "whisper-large",
+            "flux-general-en",
+            "flux-general-multi",
+        ]
+        model_box = ttk.Combobox(general, textvariable=model_var, values=model_options, width=32)
+        add_row(general, 1, "Deepgram model", model_box)
+
+        language_var = tk.StringVar(value=str(deepgram.get("language", "en-US")))
+        add_row(general, 2, "Language", ttk.Entry(general, textvariable=language_var, width=20))
+
+        level_var = tk.StringVar(value=str(cleanup.get("level", "medium")))
+        level_box = ttk.Combobox(general, textvariable=level_var, values=["none", "light", "medium", "high"], width=20)
+        add_row(general, 3, "Cleanup level", level_box)
+
+        save_history_var = tk.BooleanVar(value=bool(privacy.get("save_history", True)))
+        play_sounds_var = tk.BooleanVar(value=bool(dictation_config.get("play_sounds", True)))
+        auto_paste_var = tk.BooleanVar(value=bool(dictation_config.get("auto_paste", True)))
+        smart_space_var = tk.BooleanVar(value=bool(dictation_config.get("smart_leading_space", True)))
+        ttk.Checkbutton(general, text="Save local transcript history", variable=save_history_var).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Checkbutton(general, text="Play start/stop sounds", variable=play_sounds_var).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Checkbutton(general, text="Auto paste transcript", variable=auto_paste_var).grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Checkbutton(general, text="Smart leading space", variable=smart_space_var).grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Label(general, text=f"Config: {config_path()}", wraplength=720).grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=(18, 0)
+        )
+
+        def string_int(value: Any) -> tk.StringVar:
+            return tk.StringVar(value=str(value))
+
+        tail_var = string_int(dictation_config.get("tail_capture_ms", 520))
+        debounce_var = string_int(dictation_config.get("hold_debounce_ms", 50))
+        hold_max_var = string_int(dictation_config.get("hold_max_seconds", 30 * 60))
+        no_speech_var = string_int(dictation_config.get("hold_no_speech_timeout_seconds", 120))
+        silence_var = string_int(dictation_config.get("hold_silence_timeout_seconds", 300))
+        add_row(dictation, 0, "Tail capture ms", ttk.Entry(dictation, textvariable=tail_var, width=12))
+        add_row(dictation, 1, "Hold debounce ms", ttk.Entry(dictation, textvariable=debounce_var, width=12))
+        add_row(dictation, 2, "Hold max seconds", ttk.Entry(dictation, textvariable=hold_max_var, width=12))
+        add_row(dictation, 3, "No-speech guard seconds", ttk.Entry(dictation, textvariable=no_speech_var, width=12))
+        add_row(dictation, 4, "Silence guard seconds", ttk.Entry(dictation, textvariable=silence_var, width=12))
+
+        hotkey_entries: dict[str, tk.StringVar] = {}
+        hotkey_labels = [
+            ("push_to_talk", "Push-to-talk"),
+            ("hands_free", "Hands-free toggle"),
+            ("command_mode", "Command mode"),
+            ("panic", "Panic stop"),
+            ("cancel", "Cancel"),
+            ("paste_last", "Paste last"),
+            ("copy_last", "Copy last"),
+            ("polish", "Polish"),
+            ("prompt_engineer", "Prompt engineer"),
+            ("turn_to_list", "Turn to list"),
+            ("view_diff", "Copy cleanup diff"),
+            ("scratchpad", "Scratchpad"),
+        ]
+        for row, (action, label) in enumerate(hotkey_labels):
+            var = tk.StringVar(value=self._format_shortcuts(self.config.get("hotkeys", {}).get(action, [])))
+            hotkey_entries[action] = var
+            add_row(hotkeys_tab, row, label, ttk.Entry(hotkeys_tab, textvariable=var, width=48))
+
+        words_text = tk.Text(dictionary_tab, height=12, wrap="word", font=("Consolas", 10))
+        words_text.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        words_text.insert("1.0", "\n".join(str(word) for word in self.config.get("dictionary", {}).get("words", [])))
+        replacements_text = tk.Text(dictionary_tab, height=12, wrap="word", font=("Consolas", 10))
+        replacements_text.grid(row=0, column=1, sticky="nsew")
+        replacements_text.insert(
+            "1.0",
+            json.dumps(self.config.get("dictionary", {}).get("replacements", []), indent=2, ensure_ascii=False),
+        )
+        ttk.Label(dictionary_tab, text="Words, one per line").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(dictionary_tab, text="Replacements JSON").grid(row=1, column=1, sticky="w", pady=(6, 0))
+        dictionary_tab.columnconfigure(0, weight=1)
+        dictionary_tab.columnconfigure(1, weight=1)
+        dictionary_tab.rowconfigure(0, weight=1)
+
+        snippets_text = tk.Text(snippets_tab, height=18, wrap="word", font=("Consolas", 10))
+        snippets_text.pack(fill="both", expand=True)
+        snippets_text.insert("1.0", json.dumps(self.config.get("snippets", []), indent=2, ensure_ascii=False))
+
+        transforms_enabled_var = tk.BooleanVar(value=bool(transforms.get("enabled", True)))
+        ollama_enabled_var = tk.BooleanVar(value=bool(ollama.get("enabled", False)))
+        ollama_url_var = tk.StringVar(value=str(ollama.get("url", "http://localhost:11434/api/generate")))
+        ollama_model_var = tk.StringVar(value=str(ollama.get("model", "llama3.1")))
+        ttk.Checkbutton(transforms_tab, text="Enable transforms", variable=transforms_enabled_var).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Checkbutton(transforms_tab, text="Use Ollama for rewrites", variable=ollama_enabled_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=6
+        )
+        add_row(transforms_tab, 2, "Ollama URL", ttk.Entry(transforms_tab, textvariable=ollama_url_var, width=60))
+        add_row(transforms_tab, 3, "Ollama model", ttk.Entry(transforms_tab, textvariable=ollama_model_var, width=30))
+
+        button_row = ttk.Frame(window)
+        button_row.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
+        save_status_var = tk.StringVar(value="")
+
+        def parse_int(var: tk.StringVar, fallback: int, low: int, high: int) -> int:
+            try:
+                value = int(str(var.get()).strip())
+            except ValueError:
+                value = fallback
+            return int(self._clamp(value, low, high))
+
+        def parse_json_list(widget: tk.Text, label: str) -> list[Any]:
+            raw = widget.get("1.0", "end-1c").strip()
+            if not raw:
+                return []
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                raise ValueError(f"{label} must be valid JSON.")
+            if not isinstance(value, list):
+                raise ValueError(f"{label} must be a JSON list.")
+            return value
+
+        def save() -> None:
+            try:
+                replacements = parse_json_list(replacements_text, "Replacements")
+                snippets = parse_json_list(snippets_text, "Snippets")
+            except ValueError as error:
+                save_status_var.set(str(error))
+                self.set_state("error", "Settings not saved.", str(error))
+                return
+
+            deepgram["api_key"] = key_var.get().strip()
+            deepgram["model"] = model_var.get().strip() or "nova-3"
+            deepgram["language"] = language_var.get().strip() or "en-US"
+            cleanup["level"] = level_var.get().strip() or "medium"
+            privacy["save_history"] = bool(save_history_var.get())
+            dictation_config["play_sounds"] = bool(play_sounds_var.get())
+            dictation_config["auto_paste"] = bool(auto_paste_var.get())
+            dictation_config["smart_leading_space"] = bool(smart_space_var.get())
+            dictation_config["tail_capture_ms"] = parse_int(tail_var, 520, 0, 3000)
+            dictation_config["hold_debounce_ms"] = parse_int(debounce_var, 50, 0, 1000)
+            dictation_config["hold_max_seconds"] = parse_int(hold_max_var, 30 * 60, 5, 60 * 60)
+            dictation_config["hold_no_speech_timeout_seconds"] = parse_int(no_speech_var, 120, 1, 60 * 60)
+            dictation_config["hold_silence_timeout_seconds"] = parse_int(silence_var, 300, 1, 60 * 60)
+            self.config.setdefault("hotkeys", {}).update(
+                {action: self._parse_shortcuts(var.get()) for action, var in hotkey_entries.items()}
+            )
+            dictionary = self.config.setdefault("dictionary", {})
+            dictionary["words"] = [
+                line.strip()
+                for line in words_text.get("1.0", "end-1c").splitlines()
+                if line.strip()
+            ]
+            dictionary["replacements"] = replacements
+            self.config["snippets"] = snippets
+            transforms["enabled"] = bool(transforms_enabled_var.get())
+            ollama["enabled"] = bool(ollama_enabled_var.get())
+            ollama["url"] = ollama_url_var.get().strip() or "http://localhost:11434/api/generate"
+            ollama["model"] = ollama_model_var.get().strip() or "llama3.1"
+            callback = self.callbacks.get("save_settings")
+            if callback:
+                callback()
+            save_status_var.set("Saved.")
+            self.set_state("captured", "Settings saved.", f"Saved to {config_path()}")
+
+        ttk.Button(button_row, text="Save", command=save).pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Status", command=self.open_status).pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="History", command=self.open_history).pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Scratchpad", command=self.open_scratchpad).pack(side="left", padx=(0, 8))
+        ttk.Label(button_row, textvariable=save_status_var).pack(side="left", padx=(4, 0))
+        ttk.Button(button_row, text="Close", command=window.destroy).pack(side="right")
+
+    def _settings_palette(self, theme: str) -> dict[str, str]:
+        if str(theme).lower() == "light":
+            return {
+                "bg": "#edf3ee",
+                "panel": "#f8fbf6",
+                "surface": "#ffffff",
+                "field": "#ffffff",
+                "text": "#132321",
+                "muted": "#55706b",
+                "accent": "#0f8f79",
+                "button": "#dae9e3",
+                "select": "#d0f0e7",
+            }
+        return {
+            "bg": "#071113",
+            "panel": "#0d1a1d",
+            "surface": "#111f23",
+            "field": "#17282c",
+            "text": "#edf7f3",
+            "muted": "#8aa09c",
+            "accent": "#37e2c0",
+            "button": "#16282d",
+            "select": "#173b39",
+        }
+
+    def _style_settings_widgets(self, window: tk.Toplevel, palette: dict[str, str]) -> None:
+        style = ttk.Style(window)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Flow.TNotebook", background=palette["bg"], borderwidth=0)
+        style.configure(
+            "Flow.TNotebook.Tab",
+            background=palette["button"],
+            foreground=palette["muted"],
+            padding=(14, 8),
+            font=("Segoe UI Semibold", 9),
+        )
+        style.map(
+            "Flow.TNotebook.Tab",
+            background=[("selected", palette["surface"])],
+            foreground=[("selected", palette["text"])],
+        )
+        style.configure("Flow.TFrame", background=palette["panel"])
+        style.configure("Flow.TLabel", background=palette["panel"], foreground=palette["text"])
+        style.configure("Flow.Muted.TLabel", background=palette["panel"], foreground=palette["muted"])
+        style.configure("Flow.TCheckbutton", background=palette["panel"], foreground=palette["text"])
+        style.map("Flow.TCheckbutton", background=[("active", palette["panel"])])
+        style.configure("Flow.TButton", background=palette["button"], foreground=palette["text"], padding=(10, 7))
+        style.map("Flow.TButton", background=[("active", palette["select"])])
+        style.configure(
+            "Flow.TEntry",
+            fieldbackground=palette["field"],
+            foreground=palette["text"],
+            insertcolor=palette["text"],
+            borderwidth=1,
+        )
+        style.configure(
+            "Flow.TCombobox",
+            fieldbackground=palette["field"],
+            background=palette["button"],
+            foreground=palette["text"],
+            arrowcolor=palette["accent"],
+        )
+        style.configure(
+            "Flow.Horizontal.TScale",
+            background=palette["panel"],
+            troughcolor=palette["field"],
+            borderwidth=0,
+        )
+
+    def _draw_settings_header(self, canvas: tk.Canvas, width: int, height: int, theme: str) -> None:
+        width = max(320, int(width))
+        height = max(72, int(height))
+        palette = self._settings_palette(theme)
+        field = self._compact_wave_frame(max(1, width), max(1, height), active=True) or self._compact_reference_fallback(
+            max(1, width), max(1, height)
+        )
+        if field.mode != "RGBA":
+            field = field.convert("RGBA")
+        field = ImageEnhance.Color(field).enhance(1.15)
+        field = ImageEnhance.Contrast(field).enhance(1.05)
+        overlay = Image.new(
+            "RGBA",
+            field.size,
+            (4, 13, 16, 112) if str(theme).lower() != "light" else (245, 251, 247, 70),
+        )
+        field = Image.alpha_composite(field, overlay)
+        vignette = Image.new("RGBA", field.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(vignette)
+        draw.rounded_rectangle((8, 8, width - 9, height - 9), radius=26, outline=(57, 245, 204, 90), width=1)
+        draw.rounded_rectangle((12, 12, width - 13, 48), radius=18, fill=(255, 237, 177, 22))
+        field = Image.alpha_composite(field, vignette)
+        self.settings_header_photo = ImageTk.PhotoImage(field.convert("RGB"))
+        canvas.delete("all")
+        canvas.configure(bg=palette["bg"], highlightthickness=0, bd=0)
+        canvas.create_image(0, 0, image=self.settings_header_photo, anchor="nw")
+        canvas.create_text(
+            24,
+            34,
+            text="Talk Dat Shi",
+            anchor="w",
+            fill=palette["text"],
+            font=("Segoe UI Semibold", 18),
+        )
+        canvas.create_text(
+            24,
+            62,
+            text="Settings",
+            anchor="w",
+            fill=palette["muted"],
+            font=("Segoe UI", 10),
+        )
+        close_left = width - 55
+        canvas.create_oval(close_left, 20, close_left + 28, 48, outline="#f7d99a", width=1, fill="#142629")
+        canvas.create_text(
+            close_left + 14,
+            34,
+            text="X",
+            fill="#f7d99a",
+            font=("Segoe UI Semibold", 9),
+        )
+
+    def open_onboarding(self) -> None:
+        self.force_visible()
+        ui = self.config.setdefault("ui", {})
+        theme = str(ui.get("theme", "dark")).lower()
+        palette = self._settings_palette(theme)
+        window = self._utility_window("onboarding", "Talk Dat Shi Setup", "820x610", bg=palette["bg"])
+        if window is None:
+            return
+        window.configure(bg=palette["bg"])
+        self._style_settings_widgets(window, palette)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+
+        header = tk.Canvas(window, height=136, bg=palette["bg"], bd=0, highlightthickness=0)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        self._bind_utility_drag_handle(window, header)
+
+        def redraw_header(_event: tk.Event | None = None) -> None:
+            width = max(1, header.winfo_width())
+            field = self._compact_wave_frame(width, 136, active=True) or self._compact_reference_fallback(width, 136)
+            if field.mode != "RGBA":
+                field = field.convert("RGBA")
+            veil = Image.new("RGBA", field.size, (4, 13, 16, 132))
+            field = Image.alpha_composite(field, veil)
+            draw = ImageDraw.Draw(field)
+            draw.rounded_rectangle((8, 8, width - 9, 126), radius=28, outline=(57, 245, 204, 90), width=1)
+            draw.rounded_rectangle((14, 14, width - 15, 54), radius=18, fill=(255, 237, 177, 20))
+            self.settings_header_photo = ImageTk.PhotoImage(field.convert("RGB"))
+            header.delete("all")
+            header.create_image(0, 0, image=self.settings_header_photo, anchor="nw")
+            header.create_text(
+                24,
+                36,
+                text="Talk Dat Shi",
+                anchor="w",
+                fill=palette["text"],
+                font=("Segoe UI Semibold", 20),
+            )
+            header.create_text(
+                24,
+                70,
+                text="Bring your own speech model key. Nothing is uploaded until you press a trigger.",
+                anchor="w",
+                fill=palette["muted"],
+                font=("Segoe UI", 10),
+            )
+            header.create_text(
+                24,
+                99,
+                text="Your key is saved only in your Windows AppData config.",
+                anchor="w",
+                fill="#f6dea0",
+                font=("Segoe UI Semibold", 10),
+            )
+            close_left = width - 55
+            header.create_oval(close_left, 24, close_left + 28, 52, outline="#f7d99a", width=1, fill="#142629")
+            header.create_text(close_left + 14, 38, text="X", fill="#f7d99a", font=("Segoe UI Semibold", 9))
+
+        def header_click(event: tk.Event) -> str | None:
+            if int(getattr(event, "x", 0)) >= max(0, header.winfo_width() - 62) and int(getattr(event, "y", 0)) <= 62:
+                window.destroy()
+                return "break"
+            return None
+
+        header.bind("<Configure>", redraw_header)
+        header.bind("<ButtonPress-1>", header_click, add="+")
+        redraw_header()
+
+        panel = ttk.Frame(window, padding=18, style="Flow.TFrame")
+        panel.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        panel.columnconfigure(1, weight=1)
+
+        def add_row(row: int, label: str, widget: tk.Widget) -> None:
+            ttk.Label(panel, text=label, style="Flow.TLabel").grid(row=row, column=0, sticky="w", pady=7, padx=(0, 14))
+            widget.grid(row=row, column=1, sticky="ew", pady=7)
+
+        def combo(variable: tk.StringVar, values: list[str], width: int = 32) -> ttk.Combobox:
+            return ttk.Combobox(panel, textvariable=variable, values=values, width=width, style="Flow.TCombobox")
+
+        def entry(variable: tk.StringVar, width: int = 48, show: str | None = None) -> ttk.Entry:
+            return ttk.Entry(panel, textvariable=variable, width=width, show=show or "", style="Flow.TEntry")
+
+        active_provider_id = selected_provider_id(self.config)
+        active_model_id = selected_model_id(self.config, active_provider_id)
+        active_settings = provider_settings(self.config, active_provider_id)
+        provider_holder = {"id": active_provider_id}
+
+        provider_var = tk.StringVar(value=provider_label(active_provider_id))
+        model_var = tk.StringVar(value=model_label(active_provider_id, active_model_id))
+        variant_var = tk.StringVar(value=selected_variant(self.config, active_provider_id))
+        key_var = tk.StringVar(value=str(active_settings.get("api_key", "")))
+        base_var = tk.StringVar(value=str(active_settings.get("api_base") or PROVIDER_BY_ID[active_provider_id].api_base))
+        language_var = tk.StringVar(value=str(active_settings.get("language") or self.config.get("deepgram", {}).get("language", "en-US")))
+        key_label_var = tk.StringVar(value=PROVIDER_BY_ID[active_provider_id].key_label)
+        capability_var = tk.StringVar(value=provider_capability_summary(active_provider_id, active_model_id))
+        docs_var = tk.StringVar(value=str(PROVIDER_BY_ID[active_provider_id].docs_url or "Custom/local provider"))
+
+        provider_box = combo(provider_var, provider_labels(), 32)
+        model_box = combo(model_var, model_labels(active_provider_id), 40)
+        variant_box = combo(variant_var, list(model_for_id(active_provider_id, active_model_id).variants), 26)
+        key_entry = entry(key_var, 64, show="*")
+
+        def remember_provider_fields(provider_id: str) -> None:
+            settings = provider_settings(self.config, provider_id)
+            settings["api_key"] = key_var.get().strip()
+            settings["api_base"] = base_var.get().strip()
+            settings["language"] = language_var.get().strip() or "en-US"
+            settings["model"] = model_id_for_label(provider_id, model_var.get())
+            model = model_for_id(provider_id, settings["model"])
+            settings["variant"] = variant_var.get().strip() or model.variants[0]
+
+        def refresh_provider_fields(*, keep_model: bool = False) -> None:
+            provider_id = provider_id_for_label(provider_var.get())
+            provider = PROVIDER_BY_ID[provider_id]
+            settings = provider_settings(self.config, provider_id)
+            current_model_id = str(settings.get("model") or provider.models[0].id)
+            model_box.configure(values=model_labels(provider_id))
+            if not keep_model:
+                model_var.set(model_label(provider_id, current_model_id))
+            chosen_model_id = model_id_for_label(provider_id, model_var.get())
+            chosen_model = model_for_id(provider_id, chosen_model_id)
+            variant_box.configure(values=list(chosen_model.variants))
+            if variant_var.get() not in chosen_model.variants:
+                variant_var.set(str(settings.get("variant") or chosen_model.variants[0]))
+            if variant_var.get() not in chosen_model.variants:
+                variant_var.set(chosen_model.variants[0])
+            key_var.set(str(settings.get("api_key", "")))
+            base_var.set(str(settings.get("api_base") or provider.api_base))
+            language_var.set(str(settings.get("language") or self.config.get("deepgram", {}).get("language", "en-US")))
+            key_label_var.set(provider.key_label)
+            capability_var.set(provider_capability_summary(provider_id, chosen_model_id))
+            docs_var.set(str(provider.docs_url or "Custom/local provider"))
+            provider_holder["id"] = provider_id
+
+        def on_provider_change(_event: tk.Event | None = None) -> None:
+            remember_provider_fields(provider_holder["id"])
+            refresh_provider_fields()
+
+        def on_model_change(_event: tk.Event | None = None) -> None:
+            provider_id = provider_id_for_label(provider_var.get())
+            chosen_model_id = model_id_for_label(provider_id, model_var.get())
+            chosen_model = model_for_id(provider_id, chosen_model_id)
+            variant_box.configure(values=list(chosen_model.variants))
+            if variant_var.get() not in chosen_model.variants:
+                variant_var.set(chosen_model.variants[0])
+            capability_var.set(provider_capability_summary(provider_id, chosen_model_id))
+
+        provider_box.bind("<<ComboboxSelected>>", on_provider_change)
+        model_box.bind("<<ComboboxSelected>>", on_model_change)
+
+        add_row(0, "Provider", provider_box)
+        add_row(1, "Model", model_box)
+        add_row(2, "Mode / trim", variant_box)
+        add_row(3, "Language", entry(language_var, 18))
+        add_row(4, "API base", entry(base_var, 64))
+        add_row(5, "API key", key_entry)
+        ttk.Label(panel, textvariable=key_label_var, style="Flow.Muted.TLabel").grid(row=6, column=1, sticky="w")
+        ttk.Label(panel, textvariable=capability_var, style="Flow.Muted.TLabel").grid(row=7, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(panel, textvariable=docs_var, wraplength=580, style="Flow.Muted.TLabel").grid(
+            row=8, column=1, sticky="ew", pady=(4, 14)
+        )
+        ttk.Label(
+            panel,
+            text="Wired today: Deepgram streaming, OpenAI-compatible batch, ElevenLabs, AssemblyAI, and Gemini. Other brands are listed for roadmap/config planning and show adapter-pending status.",
+            wraplength=720,
+            style="Flow.Muted.TLabel",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        button_row = tk.Frame(window, bg=palette["bg"])
+        button_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+        status_var = tk.StringVar(value="")
+
+        def save_setup(*, close: bool = True) -> None:
+            remember_provider_fields(provider_holder["id"])
+            provider_id = provider_id_for_label(provider_var.get())
+            settings = provider_settings(self.config, provider_id)
+            self.config.setdefault("stt", {})["provider"] = provider_id
+            self.config.setdefault("deepgram", {})["language"] = language_var.get().strip() or "en-US"
+            settings["language"] = language_var.get().strip() or "en-US"
+            if provider_id == "deepgram":
+                deepgram = self.config.setdefault("deepgram", {})
+                deepgram["api_key"] = settings.get("api_key", "")
+                deepgram["model"] = settings.get("model", "nova-3")
+                deepgram["language"] = settings.get("language", "en-US")
+            sync_legacy_deepgram(self.config)
+            self.config.setdefault("onboarding", {})["completed"] = True
+            self.apply_runtime_config()
+            callback = self.callbacks.get("save_settings")
+            if callback:
+                callback()
+            status_var.set("Saved.")
+            self.set_state("captured", "Setup saved.", f"Saved to {config_path()}")
+            if close:
+                window.destroy()
+
+        def skip_setup() -> None:
+            self.config.setdefault("onboarding", {})["completed"] = True
+            callback = self.callbacks.get("save_settings")
+            if callback:
+                callback()
+            self.set_state("idle", "Setup skipped. Add a provider key in Settings before dictating.", "")
+            window.destroy()
+
+        def full_settings() -> None:
+            window.destroy()
+            self.root.after(80, self.open_settings)
+
+        ttk.Button(button_row, text="Save Setup", command=save_setup, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Full Settings", command=full_settings, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Skip", command=skip_setup, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Label(button_row, textvariable=status_var, style="Flow.Muted.TLabel").pack(side="left", padx=(6, 0))
+        ttk.Button(button_row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+
+        try:
+            key_entry.focus_set()
+        except Exception:
+            pass
+
+    def open_settings(self) -> None:
+        self.force_visible()
+        ui = self.config.setdefault("ui", {})
+        theme = str(ui.get("theme", "dark")).lower()
+        palette = self._settings_palette(theme)
+        window = self._utility_window("settings", "Talk Dat Shi Settings", "980x760", bg=palette["bg"])
+        if window is None:
+            return
+        window.configure(bg=palette["bg"])
+        self._style_settings_widgets(window, palette)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+
+        header = tk.Canvas(window, height=96, bg=palette["bg"], bd=0, highlightthickness=0)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        self._bind_utility_drag_handle(window, header)
+
+        notebook = ttk.Notebook(window, style="Flow.TNotebook")
+        notebook.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+
+        def make_tab(title: str) -> ttk.Frame:
+            frame = ttk.Frame(notebook, padding=16, style="Flow.TFrame")
+            notebook.add(frame, text=title)
+            return frame
+
+        core_tab = make_tab("Core")
+        providers_tab = make_tab("Providers")
+        deepgram_tab = make_tab("Deepgram")
+        dictation_tab = make_tab("Dictation")
+        overlay_tab = make_tab("Overlay")
+        hotkeys_tab = make_tab("Hotkeys")
+        dictionary_tab = make_tab("Dictionary")
+        snippets_tab = make_tab("Snippets")
+        transforms_tab = make_tab("Transforms")
+        privacy_tab = make_tab("Privacy")
+
+        def redraw_header(_event: tk.Event | None = None) -> None:
+            self._draw_settings_header(header, max(1, header.winfo_width()), 96, theme_var.get())
+
+        def add_row(parent: ttk.Frame, row: int, label: str, widget: tk.Widget) -> None:
+            ttk.Label(parent, text=label, style="Flow.TLabel").grid(row=row, column=0, sticky="w", pady=5, padx=(0, 14))
+            widget.grid(row=row, column=1, sticky="ew", pady=5)
+            parent.columnconfigure(1, weight=1)
+
+        def entry(parent: ttk.Frame, variable: tk.StringVar, width: int = 18, show: str | None = None) -> ttk.Entry:
+            return ttk.Entry(parent, textvariable=variable, width=width, show=show or "", style="Flow.TEntry")
+
+        def combo(parent: ttk.Frame, variable: tk.StringVar, values: list[str], width: int = 28) -> ttk.Combobox:
+            return ttk.Combobox(parent, textvariable=variable, values=values, width=width, style="Flow.TCombobox")
+
+        def check(parent: ttk.Frame, text: str, variable: tk.BooleanVar, row: int) -> None:
+            ttk.Checkbutton(parent, text=text, variable=variable, style="Flow.TCheckbutton").grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=5
+            )
+
+        def text_box(parent: ttk.Frame, height: int, *, font: tuple[str, int] = ("Consolas", 10)) -> tk.Text:
+            return tk.Text(
+                parent,
+                height=height,
+                wrap="word",
+                font=font,
+                bg=palette["field"],
+                fg=palette["text"],
+                insertbackground=palette["text"],
+                selectbackground=palette["select"],
+                bd=0,
+                padx=12,
+                pady=10,
+            )
+
+        deepgram = self.config.setdefault("deepgram", {})
+        stt_config = self.config.setdefault("stt", {})
+        cleanup = self.config.setdefault("cleanup", {})
+        privacy = self.config.setdefault("privacy", {})
+        dictation_config = self.config.setdefault("dictation", {})
+        overlay_config = self.config.setdefault("overlay", {})
+        transforms = self.config.setdefault("transforms", {})
+        ollama = transforms.setdefault("ollama", {})
+
+        theme_var = tk.StringVar(value=theme)
+        header.bind("<Configure>", redraw_header)
+        def header_click(event: tk.Event) -> str | None:
+            if int(getattr(event, "x", 0)) >= max(0, header.winfo_width() - 62) and int(getattr(event, "y", 0)) <= 58:
+                window.destroy()
+                return "break"
+            return None
+
+        header.bind("<ButtonPress-1>", header_click, add="+")
+        redraw_header()
+
+        key_var = tk.StringVar(value=str(deepgram.get("api_key", "")))
+        model_var = tk.StringVar(value=str(deepgram.get("model", "nova-3")))
+        language_var = tk.StringVar(value=str(deepgram.get("language", "en-US")))
+        level_var = tk.StringVar(value=str(cleanup.get("level", "high")))
+        save_history_var = tk.BooleanVar(value=bool(privacy.get("save_history", True)))
+        play_sounds_var = tk.BooleanVar(value=bool(dictation_config.get("play_sounds", True)))
+        auto_paste_var = tk.BooleanVar(value=bool(dictation_config.get("auto_paste", True)))
+        smart_space_var = tk.BooleanVar(value=bool(dictation_config.get("smart_leading_space", True)))
+
+        deepgram_model_options = [
+            "nova-3",
+            "nova-3-general",
+            "nova-3-medical",
+            "nova-2",
+            "nova-2-general",
+            "nova-2-meeting",
+            "nova-2-phonecall",
+            "nova-2-finance",
+            "nova-2-conversationalai",
+            "nova-2-voicemail",
+            "nova-2-video",
+            "nova-2-medical",
+            "nova-2-drivethru",
+            "nova-2-automotive",
+            "nova-2-atc",
+            "enhanced",
+            "enhanced-general",
+            "enhanced-meeting",
+            "enhanced-phonecall",
+            "enhanced-finance",
+            "base",
+            "base-general",
+            "base-meeting",
+            "base-phonecall",
+            "base-finance",
+            "base-conversationalai",
+            "base-voicemail",
+            "base-video",
+            "whisper",
+            "whisper-tiny",
+            "whisper-base",
+            "whisper-small",
+            "whisper-medium",
+            "whisper-large",
+            "flux-general-en",
+            "flux-general-multi",
+        ]
+
+        active_provider_id = selected_provider_id(self.config)
+        active_model_id = selected_model_id(self.config, active_provider_id)
+        active_settings = provider_settings(self.config, active_provider_id)
+        provider_holder = {"id": active_provider_id}
+
+        stt_provider_var = tk.StringVar(value=provider_label(active_provider_id))
+        stt_model_var = tk.StringVar(value=model_label(active_provider_id, active_model_id))
+        stt_variant_var = tk.StringVar(value=selected_variant(self.config, active_provider_id))
+        stt_key_var = tk.StringVar(value=str(active_settings.get("api_key", "")))
+        stt_base_var = tk.StringVar(value=str(active_settings.get("api_base") or PROVIDER_BY_ID[active_provider_id].api_base))
+        stt_docs_var = tk.StringVar(value=str(PROVIDER_BY_ID[active_provider_id].docs_url or "Custom/local provider"))
+        stt_capability_var = tk.StringVar(value=provider_capability_summary(active_provider_id, active_model_id))
+
+        def remember_provider_fields(provider_id: str) -> None:
+            settings = provider_settings(self.config, provider_id)
+            settings["api_key"] = stt_key_var.get().strip()
+            settings["api_base"] = stt_base_var.get().strip()
+            settings["model"] = model_id_for_label(provider_id, stt_model_var.get())
+            model = model_for_id(provider_id, settings["model"])
+            settings["variant"] = stt_variant_var.get().strip() or model.variants[0]
+
+        def refresh_provider_fields(*, keep_model: bool = False) -> None:
+            provider_id = provider_id_for_label(stt_provider_var.get())
+            settings = provider_settings(self.config, provider_id)
+            provider = PROVIDER_BY_ID[provider_id]
+            current_model_id = str(settings.get("model") or provider.models[0].id)
+            model_options_for_provider = model_labels(provider_id)
+            stt_model_box.configure(values=model_options_for_provider)
+            if not keep_model:
+                stt_model_var.set(model_label(provider_id, current_model_id))
+            chosen_model_id = model_id_for_label(provider_id, stt_model_var.get())
+            chosen_model = model_for_id(provider_id, chosen_model_id)
+            stt_variant_box.configure(values=list(chosen_model.variants))
+            if stt_variant_var.get() not in chosen_model.variants:
+                stt_variant_var.set(str(settings.get("variant") or chosen_model.variants[0]))
+            if stt_variant_var.get() not in chosen_model.variants:
+                stt_variant_var.set(chosen_model.variants[0])
+            stt_key_var.set(str(settings.get("api_key", "")))
+            stt_base_var.set(str(settings.get("api_base") or provider.api_base))
+            stt_docs_var.set(str(provider.docs_url or "Custom/local provider"))
+            stt_capability_var.set(provider_capability_summary(provider_id, chosen_model_id))
+            provider_holder["id"] = provider_id
+
+        def on_provider_change(_event: tk.Event | None = None) -> None:
+            remember_provider_fields(provider_holder["id"])
+            refresh_provider_fields()
+
+        def on_model_change(_event: tk.Event | None = None) -> None:
+            provider_id = provider_id_for_label(stt_provider_var.get())
+            chosen_model_id = model_id_for_label(provider_id, stt_model_var.get())
+            chosen_model = model_for_id(provider_id, chosen_model_id)
+            stt_variant_box.configure(values=list(chosen_model.variants))
+            if stt_variant_var.get() not in chosen_model.variants:
+                stt_variant_var.set(chosen_model.variants[0])
+            stt_capability_var.set(provider_capability_summary(provider_id, chosen_model_id))
+
+        provider_intro = tk.Canvas(providers_tab, height=86, bg=palette["panel"], bd=0, highlightthickness=0)
+        provider_intro.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        provider_intro.create_rectangle(0, 0, 1200, 86, fill=palette["panel"], outline="")
+        provider_intro.create_text(
+            18,
+            22,
+            text="Speech model routing",
+            anchor="w",
+            fill=palette["text"],
+            font=("Segoe UI Semibold", 15),
+        )
+        provider_intro.create_text(
+            18,
+            52,
+            text="Choose a brand, model, and mode. Streaming providers start live; batch providers record locally first, then transcribe after release.",
+            anchor="w",
+            fill=palette["muted"],
+            font=("Segoe UI", 10),
+        )
+
+        stt_provider_box = combo(providers_tab, stt_provider_var, provider_labels(), 30)
+        stt_model_box = combo(providers_tab, stt_model_var, model_labels(active_provider_id), 36)
+        stt_variant_box = combo(
+            providers_tab,
+            stt_variant_var,
+            list(model_for_id(active_provider_id, active_model_id).variants),
+            24,
+        )
+        stt_provider_box.bind("<<ComboboxSelected>>", on_provider_change)
+        stt_model_box.bind("<<ComboboxSelected>>", on_model_change)
+        add_row(providers_tab, 1, "Brand", stt_provider_box)
+        add_row(providers_tab, 2, "Model", stt_model_box)
+        add_row(providers_tab, 3, "Mode / trim", stt_variant_box)
+        add_row(providers_tab, 4, "Provider API key", entry(providers_tab, stt_key_var, 72, show="*"))
+        add_row(providers_tab, 5, "API base", entry(providers_tab, stt_base_var, 72))
+        ttk.Label(providers_tab, textvariable=stt_capability_var, style="Flow.Muted.TLabel").grid(
+            row=6, column=1, sticky="w", pady=(2, 8)
+        )
+        ttk.Label(providers_tab, text="Docs", style="Flow.TLabel").grid(row=7, column=0, sticky="w", pady=5, padx=(0, 14))
+        ttk.Label(providers_tab, textvariable=stt_docs_var, wraplength=650, style="Flow.Muted.TLabel").grid(
+            row=7, column=1, sticky="ew", pady=5
+        )
+        ttk.Label(
+            providers_tab,
+            text="External providers are listed now so the framework is future-proof; currently wired adapters are Deepgram streaming plus OpenAI-compatible, ElevenLabs, AssemblyAI, and Gemini batch transcription.",
+            wraplength=850,
+            style="Flow.Muted.TLabel",
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        providers_tab.columnconfigure(1, weight=1)
+
+        add_row(core_tab, 0, "Active brand", ttk.Label(core_tab, textvariable=stt_provider_var, style="Flow.TLabel"))
+        add_row(core_tab, 1, "Active model", ttk.Label(core_tab, textvariable=stt_model_var, style="Flow.TLabel"))
+        add_row(core_tab, 2, "Language", entry(core_tab, language_var, 20))
+        add_row(core_tab, 3, "Auto Cleanup", combo(core_tab, level_var, ["none", "light", "medium", "high"], 20))
+        add_row(core_tab, 4, "Theme", combo(core_tab, theme_var, ["dark", "light"], 20))
+        check(core_tab, "Save local transcript history", save_history_var, 5)
+        check(core_tab, "Play start and stop sounds", play_sounds_var, 6)
+        check(core_tab, "Auto paste transcript", auto_paste_var, 7)
+        check(core_tab, "Smart leading space", smart_space_var, 8)
+        ttk.Label(core_tab, text=f"Config: {config_path()}", wraplength=850, style="Flow.Muted.TLabel").grid(
+            row=9, column=0, columnspan=2, sticky="w", pady=(16, 0)
+        )
+
+        def string_var(value: Any) -> tk.StringVar:
+            return tk.StringVar(value=str(value))
+
+        sample_rate_var = string_var(deepgram.get("sample_rate", 16000))
+        channels_var = string_var(deepgram.get("channels", 1))
+        encoding_var = string_var(deepgram.get("encoding", "linear16"))
+        endpointing_var = string_var(deepgram.get("endpointing", 300))
+        utterance_var = string_var(deepgram.get("utterance_end_ms", 1000))
+        smart_format_var = tk.BooleanVar(value=bool(deepgram.get("smart_format", True)))
+        punctuate_var = tk.BooleanVar(value=bool(deepgram.get("punctuate", True)))
+        interim_var = tk.BooleanVar(value=bool(deepgram.get("interim_results", True)))
+        vad_var = tk.BooleanVar(value=bool(deepgram.get("vad_events", True)))
+        filler_var = tk.BooleanVar(value=bool(deepgram.get("filler_words", False)))
+        dg_dictation_var = tk.BooleanVar(value=bool(deepgram.get("dictation", True)))
+        numerals_var = tk.BooleanVar(value=bool(deepgram.get("numerals", True)))
+        mip_var = tk.BooleanVar(value=bool(deepgram.get("mip_opt_out", True)))
+        extra_text = text_box(deepgram_tab, 8)
+        extra_text.insert("1.0", json.dumps(deepgram.get("extra", {}), indent=2, ensure_ascii=False))
+
+        add_row(deepgram_tab, 0, "Deepgram API key", entry(deepgram_tab, key_var, 72, show="*"))
+        add_row(deepgram_tab, 1, "Deepgram model", combo(deepgram_tab, model_var, deepgram_model_options, 34))
+        add_row(deepgram_tab, 2, "Sample rate", entry(deepgram_tab, sample_rate_var, 12))
+        add_row(deepgram_tab, 3, "Channels", entry(deepgram_tab, channels_var, 12))
+        add_row(deepgram_tab, 4, "Encoding", combo(deepgram_tab, encoding_var, ["linear16", "mulaw", "alaw", "opus"], 18))
+        add_row(deepgram_tab, 5, "Endpointing ms", entry(deepgram_tab, endpointing_var, 12))
+        add_row(deepgram_tab, 6, "Utterance end ms", entry(deepgram_tab, utterance_var, 12))
+        check(deepgram_tab, "Smart format", smart_format_var, 7)
+        check(deepgram_tab, "Punctuation", punctuate_var, 8)
+        check(deepgram_tab, "Interim results", interim_var, 9)
+        check(deepgram_tab, "VAD speech events", vad_var, 10)
+        check(deepgram_tab, "Filler words", filler_var, 11)
+        check(deepgram_tab, "Dictation mode", dg_dictation_var, 12)
+        check(deepgram_tab, "Numerals", numerals_var, 13)
+        check(deepgram_tab, "Deepgram MIP opt-out", mip_var, 14)
+        ttk.Label(deepgram_tab, text="Extra Deepgram params JSON", style="Flow.TLabel").grid(
+            row=15, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        )
+        extra_text.grid(row=16, column=0, columnspan=2, sticky="nsew")
+        deepgram_tab.rowconfigure(16, weight=1)
+
+        tail_var = string_var(dictation_config.get("tail_capture_ms", 520))
+        debounce_var = string_var(dictation_config.get("hold_debounce_ms", 35))
+        max_var = string_var(dictation_config.get("max_seconds", 5 * 60))
+        no_speech_var = string_var(dictation_config.get("no_speech_timeout_seconds", 15))
+        silence_var = string_var(dictation_config.get("silence_timeout_seconds", 45))
+        hold_max_var = string_var(dictation_config.get("hold_max_seconds", 30 * 60))
+        hold_no_speech_var = string_var(dictation_config.get("hold_no_speech_timeout_seconds", 120))
+        hold_silence_var = string_var(dictation_config.get("hold_silence_timeout_seconds", 300))
+        restore_clipboard_var = tk.BooleanVar(value=bool(dictation_config.get("restore_clipboard_after_paste", False)))
+        press_enter_var = tk.BooleanVar(value=bool(dictation_config.get("press_enter_command", True)))
+
+        add_row(dictation_tab, 0, "Tail capture ms", entry(dictation_tab, tail_var, 12))
+        add_row(dictation_tab, 1, "Hold debounce ms", entry(dictation_tab, debounce_var, 12))
+        add_row(dictation_tab, 2, "Hands-free max seconds", entry(dictation_tab, max_var, 12))
+        add_row(dictation_tab, 3, "Hands-free no speech", entry(dictation_tab, no_speech_var, 12))
+        add_row(dictation_tab, 4, "Hands-free silence", entry(dictation_tab, silence_var, 12))
+        add_row(dictation_tab, 5, "Hold max seconds", entry(dictation_tab, hold_max_var, 12))
+        add_row(dictation_tab, 6, "Hold no speech", entry(dictation_tab, hold_no_speech_var, 12))
+        add_row(dictation_tab, 7, "Hold silence", entry(dictation_tab, hold_silence_var, 12))
+        check(dictation_tab, "Restore clipboard after paste", restore_clipboard_var, 8)
+        check(dictation_tab, "Spoken press-enter command", press_enter_var, 9)
+
+        show_start_var = tk.BooleanVar(value=bool(overlay_config.get("show_on_start", True)))
+        opacity_var = string_var(overlay_config.get("opacity", 0.94))
+        active_pill_w_var = string_var(overlay_config.get("active_pill_width", 320))
+        active_pill_h_var = string_var(overlay_config.get("active_pill_height", 58))
+        active_w_var = string_var(overlay_config.get("active_width", 320))
+        active_h_var = string_var(overlay_config.get("active_height", 58))
+        compact_w_var = string_var(overlay_config.get("compact_width", 110))
+        compact_h_var = string_var(overlay_config.get("compact_height", 38))
+        bottom_margin_var = string_var(overlay_config.get("bottom_margin", 68))
+        active_frame_var = string_var(overlay_config.get("active_frame_ms", 16))
+        idle_frame_var = string_var(overlay_config.get("idle_frame_ms", 33))
+        resize_frame_var = string_var(overlay_config.get("resize_frame_ms", 12))
+        active_loop_var = string_var(overlay_config.get("active_loop_seconds", 3.84))
+        idle_loop_var = string_var(overlay_config.get("idle_loop_seconds", 8.0))
+        result_hold_var = string_var(overlay_config.get("result_hold_ms", 900))
+        error_hold_var = string_var(overlay_config.get("error_hold_ms", 5200))
+        wave_start_var = string_var(overlay_config.get("wave_loop_start", 0))
+        wave_end_var = string_var(overlay_config.get("wave_loop_end", 50))
+        fixed_var = tk.BooleanVar(value=bool(overlay_config.get("fixed_position", True)))
+        no_activate_var = tk.BooleanVar(value=bool(overlay_config.get("no_activate", True)))
+
+        add_row(overlay_tab, 0, "Opacity", entry(overlay_tab, opacity_var, 12))
+        add_row(overlay_tab, 1, "Active pill width", entry(overlay_tab, active_pill_w_var, 12))
+        add_row(overlay_tab, 2, "Active pill height", entry(overlay_tab, active_pill_h_var, 12))
+        add_row(overlay_tab, 3, "Active window width", entry(overlay_tab, active_w_var, 12))
+        add_row(overlay_tab, 4, "Active window height", entry(overlay_tab, active_h_var, 12))
+        add_row(overlay_tab, 5, "Resting width", entry(overlay_tab, compact_w_var, 12))
+        add_row(overlay_tab, 6, "Resting height", entry(overlay_tab, compact_h_var, 12))
+        add_row(overlay_tab, 7, "Bottom margin", entry(overlay_tab, bottom_margin_var, 12))
+        add_row(overlay_tab, 8, "Active frame ms", entry(overlay_tab, active_frame_var, 12))
+        add_row(overlay_tab, 9, "Idle frame ms", entry(overlay_tab, idle_frame_var, 12))
+        add_row(overlay_tab, 10, "Resize frame ms", entry(overlay_tab, resize_frame_var, 12))
+        add_row(overlay_tab, 11, "Active loop seconds", entry(overlay_tab, active_loop_var, 12))
+        add_row(overlay_tab, 12, "Idle loop seconds", entry(overlay_tab, idle_loop_var, 12))
+        add_row(overlay_tab, 13, "Result hold ms", entry(overlay_tab, result_hold_var, 12))
+        add_row(overlay_tab, 14, "Error hold ms", entry(overlay_tab, error_hold_var, 12))
+        add_row(overlay_tab, 15, "Wave loop start", entry(overlay_tab, wave_start_var, 12))
+        add_row(overlay_tab, 16, "Wave loop end", entry(overlay_tab, wave_end_var, 12))
+        check(overlay_tab, "Show overlay on start", show_start_var, 17)
+        check(overlay_tab, "Always same bottom position", fixed_var, 18)
+        check(overlay_tab, "Do not steal focus", no_activate_var, 19)
+
+        hotkey_entries: dict[str, tk.StringVar] = {}
+        hotkey_labels = [
+            ("push_to_talk", "Push-to-talk"),
+            ("hands_free", "Hands-free toggle"),
+            ("command_mode", "Command mode"),
+            ("panic", "Panic stop"),
+            ("cancel", "Cancel"),
+            ("paste_last", "Paste last"),
+            ("copy_last", "Copy last"),
+            ("polish", "Polish"),
+            ("prompt_engineer", "Prompt engineer"),
+            ("turn_to_list", "Turn to list"),
+            ("view_diff", "Copy cleanup diff"),
+            ("scratchpad", "Scratchpad"),
+        ]
+        for row, (action, label) in enumerate(hotkey_labels):
+            var = tk.StringVar(value=self._format_shortcuts(self.config.get("hotkeys", {}).get(action, [])))
+            hotkey_entries[action] = var
+            add_row(hotkeys_tab, row, label, entry(hotkeys_tab, var, 54))
+
+        words_text = text_box(dictionary_tab, 17)
+        replacements_text = text_box(dictionary_tab, 17)
+        words_text.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        replacements_text.grid(row=0, column=1, sticky="nsew")
+        words_text.insert("1.0", "\n".join(str(word) for word in self.config.get("dictionary", {}).get("words", [])))
+        replacements_text.insert(
+            "1.0",
+            json.dumps(self.config.get("dictionary", {}).get("replacements", []), indent=2, ensure_ascii=False),
+        )
+        ttk.Label(dictionary_tab, text="Words, one per line", style="Flow.Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Label(dictionary_tab, text="Replacements JSON", style="Flow.Muted.TLabel").grid(
+            row=1, column=1, sticky="w", pady=(8, 0)
+        )
+        dictionary_tab.columnconfigure(0, weight=1)
+        dictionary_tab.columnconfigure(1, weight=1)
+        dictionary_tab.rowconfigure(0, weight=1)
+
+        snippets_text = text_box(snippets_tab, 22)
+        snippets_text.pack(fill="both", expand=True)
+        snippets_text.insert("1.0", json.dumps(self.config.get("snippets", []), indent=2, ensure_ascii=False))
+
+        transforms_enabled_var = tk.BooleanVar(value=bool(transforms.get("enabled", True)))
+        ollama_enabled_var = tk.BooleanVar(value=bool(ollama.get("enabled", False)))
+        ollama_url_var = tk.StringVar(value=str(ollama.get("url", "http://localhost:11434/api/generate")))
+        ollama_model_var = tk.StringVar(value=str(ollama.get("model", "llama3.1")))
+        custom_text = text_box(transforms_tab, 11)
+        custom_text.insert("1.0", json.dumps(transforms.get("custom", []), indent=2, ensure_ascii=False))
+        check(transforms_tab, "Enable transforms", transforms_enabled_var, 0)
+        check(transforms_tab, "Use Ollama for rewrites", ollama_enabled_var, 1)
+        add_row(transforms_tab, 2, "Ollama URL", entry(transforms_tab, ollama_url_var, 70))
+        add_row(transforms_tab, 3, "Ollama model", entry(transforms_tab, ollama_model_var, 30))
+        ttk.Label(transforms_tab, text="Custom transforms JSON", style="Flow.TLabel").grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        )
+        custom_text.grid(row=5, column=0, columnspan=2, sticky="nsew")
+        transforms_tab.rowconfigure(5, weight=1)
+
+        history_limit_var = string_var(privacy.get("history_limit", 0))
+        add_row(privacy_tab, 0, "History limit", entry(privacy_tab, history_limit_var, 12))
+        ttk.Label(privacy_tab, text=f"History: {history_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Label(privacy_tab, text=f"Full history: {full_history_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Label(privacy_tab, text=f"Live draft: {live_draft_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=6
+        )
+
+        button_row = tk.Frame(window, bg=palette["bg"])
+        button_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+        save_status_var = tk.StringVar(value="")
+
+        def parse_int(var: tk.StringVar, fallback: int, low: int, high: int) -> int:
+            try:
+                value = int(float(str(var.get()).strip()))
+            except ValueError:
+                value = fallback
+            return int(self._clamp(value, low, high))
+
+        def parse_float(var: tk.StringVar, fallback: float, low: float, high: float) -> float:
+            try:
+                value = float(str(var.get()).strip())
+            except ValueError:
+                value = fallback
+            return float(self._clamp(value, low, high))
+
+        def parse_endpointing(var: tk.StringVar) -> int | bool:
+            raw = str(var.get()).strip().lower()
+            if raw in {"false", "off", "disabled", "no"}:
+                return False
+            if raw in {"true", "on", "enabled", "yes"}:
+                return True
+            return parse_int(var, 300, 0, 5000)
+
+        def parse_json_list(widget: tk.Text, label: str) -> list[Any]:
+            raw = widget.get("1.0", "end-1c").strip()
+            if not raw:
+                return []
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                raise ValueError(f"{label} must be valid JSON.")
+            if not isinstance(value, list):
+                raise ValueError(f"{label} must be a JSON list.")
+            return value
+
+        def parse_json_object(widget: tk.Text, label: str) -> dict[str, Any]:
+            raw = widget.get("1.0", "end-1c").strip()
+            if not raw:
+                return {}
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                raise ValueError(f"{label} must be valid JSON.")
+            if not isinstance(value, dict):
+                raise ValueError(f"{label} must be a JSON object.")
+            return value
+
+        def save() -> None:
+            try:
+                replacements = parse_json_list(replacements_text, "Replacements")
+                snippets = parse_json_list(snippets_text, "Snippets")
+                custom_transforms = parse_json_list(custom_text, "Custom transforms")
+                deepgram_extra = parse_json_object(extra_text, "Extra Deepgram params")
+            except ValueError as error:
+                save_status_var.set(str(error))
+                self.set_state("error", "Settings not saved.", str(error))
+                return
+
+            ui["theme"] = theme_var.get().strip().lower() or "dark"
+            deepgram["api_key"] = key_var.get().strip()
+            deepgram["model"] = model_var.get().strip() or "nova-3"
+            deepgram["language"] = language_var.get().strip() or "en-US"
+            deepgram["sample_rate"] = parse_int(sample_rate_var, 16000, 8000, 192000)
+            deepgram["channels"] = parse_int(channels_var, 1, 1, 8)
+            deepgram["encoding"] = encoding_var.get().strip() or "linear16"
+            deepgram["smart_format"] = bool(smart_format_var.get())
+            deepgram["punctuate"] = bool(punctuate_var.get())
+            deepgram["interim_results"] = bool(interim_var.get())
+            deepgram["endpointing"] = parse_endpointing(endpointing_var)
+            deepgram["utterance_end_ms"] = parse_int(utterance_var, 1000, 0, 10000)
+            deepgram["vad_events"] = bool(vad_var.get())
+            deepgram["filler_words"] = bool(filler_var.get())
+            deepgram["dictation"] = bool(dg_dictation_var.get())
+            deepgram["numerals"] = bool(numerals_var.get())
+            deepgram["mip_opt_out"] = bool(mip_var.get())
+            deepgram["extra"] = deepgram_extra
+            deepgram_provider_settings = provider_settings(self.config, "deepgram")
+            deepgram_provider_settings["api_key"] = deepgram["api_key"]
+            deepgram_provider_settings["model"] = deepgram["model"]
+            deepgram_provider_settings["variant"] = "streaming"
+            deepgram_provider_settings["language"] = deepgram["language"]
+
+            remember_provider_fields(provider_holder["id"])
+            active_provider = provider_id_for_label(stt_provider_var.get())
+            active_settings = provider_settings(self.config, active_provider)
+            active_settings["language"] = language_var.get().strip() or "en-US"
+            if active_provider == "deepgram":
+                if stt_key_var.get().strip():
+                    active_settings["api_key"] = stt_key_var.get().strip()
+                    deepgram["api_key"] = stt_key_var.get().strip()
+                active_model = model_id_for_label("deepgram", stt_model_var.get())
+                active_settings["model"] = active_model
+                deepgram["model"] = active_model
+            stt_config["provider"] = active_provider
+            sync_legacy_deepgram(self.config)
+
+            cleanup["level"] = level_var.get().strip().lower() or "high"
+            privacy["save_history"] = bool(save_history_var.get())
+            privacy["history_limit"] = parse_int(history_limit_var, 0, 0, 100000)
+            dictation_config["play_sounds"] = bool(play_sounds_var.get())
+            dictation_config["auto_paste"] = bool(auto_paste_var.get())
+            dictation_config["smart_leading_space"] = bool(smart_space_var.get())
+            dictation_config["tail_capture_ms"] = parse_int(tail_var, 520, 0, 3000)
+            dictation_config["hold_debounce_ms"] = parse_int(debounce_var, 35, 0, 1000)
+            dictation_config["max_seconds"] = parse_int(max_var, 5 * 60, 5, 60 * 60)
+            dictation_config["no_speech_timeout_seconds"] = parse_int(no_speech_var, 15, 1, 60 * 60)
+            dictation_config["silence_timeout_seconds"] = parse_int(silence_var, 45, 1, 60 * 60)
+            dictation_config["hold_max_seconds"] = parse_int(hold_max_var, 30 * 60, 5, 60 * 60)
+            dictation_config["hold_no_speech_timeout_seconds"] = parse_int(hold_no_speech_var, 120, 1, 60 * 60)
+            dictation_config["hold_silence_timeout_seconds"] = parse_int(hold_silence_var, 300, 1, 60 * 60)
+            dictation_config["restore_clipboard_after_paste"] = bool(restore_clipboard_var.get())
+            dictation_config["press_enter_command"] = bool(press_enter_var.get())
+
+            overlay_config["show_on_start"] = bool(show_start_var.get())
+            overlay_config["opacity"] = parse_float(opacity_var, 0.94, 0.20, 1.00)
+            overlay_config["active_pill_width"] = parse_int(active_pill_w_var, 320, 120, 1200)
+            overlay_config["active_pill_height"] = parse_int(active_pill_h_var, 58, 28, 260)
+            overlay_config["active_width"] = parse_int(active_w_var, 320, 120, 1400)
+            overlay_config["active_height"] = parse_int(active_h_var, 58, 28, 320)
+            overlay_config["compact_width"] = parse_int(compact_w_var, 110, 40, 800)
+            overlay_config["compact_height"] = parse_int(compact_h_var, 38, 20, 180)
+            overlay_config["bottom_margin"] = parse_int(bottom_margin_var, 68, 0, 400)
+            overlay_config["active_frame_ms"] = parse_int(active_frame_var, 16, 8, 200)
+            overlay_config["idle_frame_ms"] = parse_int(idle_frame_var, 33, 8, 500)
+            overlay_config["resize_frame_ms"] = parse_int(resize_frame_var, 12, 8, 120)
+            overlay_config["active_loop_seconds"] = parse_float(active_loop_var, 3.84, 0.10, 20.0)
+            overlay_config["idle_loop_seconds"] = parse_float(idle_loop_var, 8.0, 0.10, 60.0)
+            overlay_config["result_hold_ms"] = parse_int(result_hold_var, 900, 0, 30000)
+            overlay_config["error_hold_ms"] = parse_int(error_hold_var, 5200, 0, 60000)
+            overlay_config["wave_loop_start"] = parse_int(wave_start_var, 0, 0, 10000)
+            overlay_config["wave_loop_end"] = parse_int(wave_end_var, 50, 0, 10000)
+            overlay_config["fixed_position"] = bool(fixed_var.get())
+            overlay_config["no_activate"] = bool(no_activate_var.get())
+
+            self.config.setdefault("hotkeys", {}).update(
+                {action: self._parse_shortcuts(var.get()) for action, var in hotkey_entries.items()}
+            )
+            dictionary = self.config.setdefault("dictionary", {})
+            dictionary["words"] = [
+                line.strip()
+                for line in words_text.get("1.0", "end-1c").splitlines()
+                if line.strip()
+            ]
+            dictionary["replacements"] = replacements
+            self.config["snippets"] = snippets
+            transforms["enabled"] = bool(transforms_enabled_var.get())
+            transforms["custom"] = custom_transforms
+            ollama["enabled"] = bool(ollama_enabled_var.get())
+            ollama["url"] = ollama_url_var.get().strip() or "http://localhost:11434/api/generate"
+            ollama["model"] = ollama_model_var.get().strip() or "llama3.1"
+
+            self.apply_runtime_config()
+            callback = self.callbacks.get("save_settings")
+            if callback:
+                callback()
+            save_status_var.set("Saved.")
+            self.set_state("captured", "Settings saved.", f"Saved to {config_path()}")
+
+        ttk.Button(button_row, text="Save", command=save, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Status", command=self.open_status, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="History", command=self.open_history, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Scratchpad", command=self.open_scratchpad, style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Label(button_row, textvariable=save_status_var, style="Flow.Muted.TLabel").pack(side="left", padx=(4, 0))
+        ttk.Button(button_row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+
+    def _format_shortcuts(self, shortcuts: Any) -> str:
+        if not isinstance(shortcuts, list):
+            return ""
+        values: list[str] = []
+        for shortcut in shortcuts:
+            if isinstance(shortcut, str):
+                values.append(shortcut)
+            elif isinstance(shortcut, list):
+                values.append("+".join(str(part).strip() for part in shortcut if str(part).strip()))
+        return ", ".join(value for value in values if value)
+
+    def _parse_shortcuts(self, raw: str) -> list[list[str]]:
+        shortcuts: list[list[str]] = []
+        for chunk in str(raw).replace("\n", ",").split(","):
+            parts = [part.strip().lower() for part in chunk.replace("+", " ").split() if part.strip()]
+            if parts:
+                shortcuts.append(parts[:3])
+        return shortcuts[:4]
+
+    def open_status(self) -> None:
+        self.force_visible()
+        window = self._utility_window("status", "Talk Dat Shi Status", "620x460", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "Status", "#071113")
+        text = tk.Text(
+            window,
+            wrap="word",
+            font=("Consolas", 10),
+            bg="#102126",
+            fg="#f2f5fb",
+            insertbackground="#ffffff",
+            selectbackground="#27514d",
+            bd=0,
+            padx=12,
+            pady=12,
+        )
+        text.pack(fill="both", expand=True, padx=14, pady=(10, 8))
+
+        def snapshot_text() -> str:
+            provider = self.callbacks.get("status_provider")
+            data = provider() if provider else {}
+            if not isinstance(data, dict):
+                data = {}
+            lines = ["Talk Dat Shi status", "=" * 48, ""]
+            for key in sorted(data):
+                lines.append(f"{key}: {data[key]}")
+            lines.extend(
+                [
+                    "",
+                    "Credit safety",
+                    "=" * 48,
+                    f"Overlay state: {self.state}",
+                    f"Last message: {self.last_status}",
+                    f"Last preview: {self.last_preview}",
+                    "Mic/Deepgram are active only when session_active is true.",
+                    "Panic stop: Ctrl+Win+Esc or tray menu.",
+                ]
+            )
+            return "\n".join(lines) + "\n"
+
+        def refresh() -> None:
+            text.configure(state="normal")
+            text.delete("1.0", "end")
+            text.insert("1.0", snapshot_text())
+            text.configure(state="disabled")
+
+        controls = tk.Frame(window, bg="#071113")
+        controls.pack(fill="x", padx=14, pady=(0, 14))
+        ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Panic stop", command=self._callback("panic"), style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+        refresh()
+
+    def _open_history_from_event(self, _event: tk.Event | None = None) -> str:
+        self.open_history()
+        return "break"
+
+    def open_history(self) -> None:
+        self.force_visible()
+        window = self._utility_window("history", "Talk Dat Shi History", "900x640", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "History", "#071113")
+
+        header = tk.Frame(window, bg="#071113")
+        header.pack(fill="x", padx=14, pady=(8, 6))
+        tk.Label(
+            header,
+            text="Full dictation history",
+            bg="#071113",
+            fg="#f4f6fb",
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).pack(side="left")
+        tk.Label(
+            header,
+            text=str(full_history_path()),
+            bg="#071113",
+            fg="#9aa3b5",
+            font=("Segoe UI", 9),
+            anchor="e",
+        ).pack(side="right")
+
+        body = tk.Frame(window, bg="#071113")
+        body.pack(fill="both", expand=True, padx=14)
+        scrollbar = ttk.Scrollbar(body)
+        scrollbar.pack(side="right", fill="y")
+        text = tk.Text(
+            body,
+            wrap="word",
+            undo=False,
+            font=("Consolas", 10),
+            bg="#102126",
+            fg="#f2f5fb",
+            insertbackground="#ffffff",
+            selectbackground="#27514d",
+            bd=0,
+            padx=12,
+            pady=12,
+            yscrollcommand=scrollbar.set,
+        )
+        text.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=text.yview)
+
+        def load_text() -> None:
+            text.configure(state="normal")
+            text.delete("1.0", "end")
+            content = self._history_window_text()
+            text.insert("1.0", content)
+            text.configure(state="disabled")
+            text.see("end")
+
+        def copy_value(value: str) -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.set_state("captured", "History copied. Mic off.", "")
+
+        def copy_all() -> None:
+            copy_value(text.get("1.0", "end-1c"))
+
+        def copy_selection() -> None:
+            try:
+                selected = text.get("sel.first", "sel.last")
+            except tk.TclError:
+                selected = text.get("1.0", "end-1c")
+            copy_value(selected)
+
+        def open_file(path: Path) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text("", encoding="utf-8")
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            except OSError:
+                copy_value(str(path))
+
+        def clear_history() -> None:
+            for path in (history_path(), full_history_path(), live_draft_path()):
+                try:
+                    if path.exists():
+                        path.write_text("", encoding="utf-8")
+                except OSError:
+                    pass
+            load_text()
+            self.set_state("captured", "History cleared. Mic off.", "")
+
+        controls = tk.Frame(window, bg="#071113")
+        controls.pack(fill="x", padx=14, pady=12)
+        ttk.Button(controls, text="Copy all", command=copy_all, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Copy selection", command=copy_selection, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Refresh", command=load_text, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Open history file", command=lambda: open_file(full_history_path()), style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(controls, text="Open live draft", command=lambda: open_file(live_draft_path()), style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(controls, text="Clear history", command=clear_history, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+
+        load_text()
+
+    def _history_window_text(self) -> str:
+        sections: list[str] = []
+        draft_path = live_draft_path()
+        if draft_path.exists():
+            draft = draft_path.read_text(encoding="utf-8", errors="replace").strip()
+            if draft:
+                sections.append("LIVE DRAFT\n" + "=" * 72 + "\n" + draft)
+
+        full_path = full_history_path()
+        full_text = ""
+        if full_path.exists():
+            full_text = full_path.read_text(encoding="utf-8", errors="replace").strip()
+            if full_text:
+                sections.append("FULL HISTORY\n" + "=" * 72 + "\n" + full_text)
+
+        json_path = history_path()
+        if json_path.exists() and not full_text:
+            raw = json_path.read_text(encoding="utf-8", errors="replace").strip()
+            if raw:
+                sections.append("RAW JSON HISTORY\n" + "=" * 72 + "\n" + raw)
+
+        if not sections:
+            sections.append(
+                "No dictation history yet.\n\n"
+                f"Full history file: {full_history_path()}\n"
+                f"Live draft file: {live_draft_path()}\n"
+            )
+        return "\n\n".join(sections) + "\n"
+
+    def open_scratchpad(self) -> None:
+        self.force_visible()
+        path = scratchpad_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        window = self._utility_window("scratchpad", "Talk Dat Shi Scratchpad", "720x540", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "Scratchpad", "#071113")
+        text = tk.Text(
+            window,
+            wrap="word",
+            undo=True,
+            font=("Segoe UI", 11),
+            bg="#102126",
+            fg="#f2f5fb",
+            insertbackground="#ffffff",
+            selectbackground="#27514d",
+            bd=0,
+            padx=12,
+            pady=12,
+        )
+        text.pack(fill="both", expand=True, padx=14, pady=(10, 8))
+        if path.exists():
+            text.insert("1.0", path.read_text(encoding="utf-8"))
+
+        row = tk.Frame(window, bg="#071113")
+        row.pack(fill="x", padx=14, pady=(0, 12))
+
+        def save() -> None:
+            path.write_text(text.get("1.0", "end-1c"), encoding="utf-8")
+            self.set_state("captured", "Scratchpad saved.", str(path))
+
+        ttk.Button(row, text="Save", command=save, style="Flow.TButton").pack(side="left", padx=(0, 8), pady=8)
+        ttk.Button(row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="left", padx=8, pady=8)
+
+    def close(self) -> None:
+        callback = self.callbacks.get("quit")
+        if callback:
+            callback()
+        else:
+            self.root.destroy()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+    def destroy(self) -> None:
+        self.root.after(0, self.root.destroy)
