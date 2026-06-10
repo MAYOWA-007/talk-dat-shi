@@ -46,14 +46,14 @@ git push origin v0.1.0
 
 The workflow creates:
 
-- `Talk-Dat-Shi-Setup.exe`
+- `Talk-Dat-Shi-Setup.exe` custom glass installer
 - `Talk-Dat-Shi-Windows-Portable.zip`
 - `SHA256SUMS.txt`
 
 For a local manual build:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1
 ```
 
-Upload `release\Talk-Dat-Shi-Setup.exe`, a portable ZIP, and checksums to a GitHub Release. Do not commit `release/`, `dist/`, or `build/`.
+Upload `release\Talk-Dat-Shi-Setup.exe`, a portable ZIP, and checksums to a GitHub Release. Do not commit `release/`, `dist/`, `build/`, generated `.spec` files, API keys, private config, or transcript history.

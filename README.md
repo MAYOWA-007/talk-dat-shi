@@ -31,6 +31,8 @@ Go to [Releases](https://github.com/MAYOWA-007/talk-dat-shi/releases) and downlo
 
 Launch Talk Dat Shi, complete setup with your own provider key, then test in Notepad. The microphone stays off until you click the pill or press a trigger.
 
+The setup EXE uses a custom glass installer. It installs per-user under `%LOCALAPPDATA%\Programs\Talk Dat Shi`, creates Start/Desktop shortcuts, optionally starts with Windows, registers a matching glass uninstaller in Windows Apps, and never includes API keys or private user data.
+
 The portable ZIP includes `START-HERE.md`, `INSTALL.md`, and `PROVIDERS.md`.
 
 ## Run From Source
@@ -68,13 +70,13 @@ Build the EXE and create a desktop shortcut:
 powershell -ExecutionPolicy Bypass -File .\build-exe.ps1 -CreateDesktopShortcut
 ```
 
-Build the Inno Setup installer:
+Build the custom glass Windows installer:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-The installer output is written to `release\Talk-Dat-Shi-Setup.exe`.
+The installer output is written to `release\Talk-Dat-Shi-Setup.exe`. The compatibility command above delegates to `build-custom-installer.ps1`.
 
 ## Provider Support
 
@@ -107,6 +109,8 @@ When you are ready to create the public repository, follow [docs/GITHUB_PUBLISH.
 Talk Dat Shi does not run a server. Audio is captured locally only after a trigger, then sent to the selected STT provider for transcription. Transcript history is local and can be disabled in Settings.
 
 User API keys, dictionaries, snippets, provider advanced options, transcript history, and scratchpad content live under `%APPDATA%\TalkDatShi`. They are not part of the public GitHub repository or default download.
+
+Uninstall keeps `%APPDATA%\TalkDatShi` by default. The custom uninstaller offers a separate option to remove that private local data.
 
 Local files:
 

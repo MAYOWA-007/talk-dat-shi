@@ -13,12 +13,13 @@ The release assets do not contain API keys, dictionaries, snippets, private conf
 ## Recommended: Windows Installer
 
 1. Download `Talk-Dat-Shi-Setup.exe` from a release.
-2. Run the installer.
-3. Leave startup enabled only if you want Talk Dat Shi to launch when Windows signs in.
-4. Launch the app.
-5. Complete onboarding with your own provider key and model.
+2. Run the custom glass installer.
+3. Keep the default install location unless you have a reason to move it.
+4. Leave "Start with Windows" off unless you want Talk Dat Shi to launch when Windows signs in.
+5. Click Install. Leave "Launch after install" enabled for the fastest first run.
+6. Complete onboarding with your own provider key and model.
 
-The installer does not contain API keys. It installs only the app executable and optional startup shortcut.
+The installer does not contain API keys. It installs the app executable, local help docs, Start/Desktop shortcuts, optional startup shortcut, and a matching custom glass uninstaller registered in Windows Apps.
 
 ## Portable EXE
 
@@ -56,13 +57,19 @@ Build the EXE:
 powershell -ExecutionPolicy Bypass -File .\build-exe.ps1
 ```
 
-Build the installer:
+Build the custom glass installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1
+```
+
+The compatibility command also works:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-The installer helper requires Inno Setup 6.
+The installer builder uses PyInstaller and does not require Inno Setup.
 
 ## First-Run Onboarding
 
@@ -87,7 +94,9 @@ Recommended first test:
 
 ## Uninstall
 
-If installed through the setup EXE, uninstall from Windows Apps. If using the portable EXE, quit Talk Dat Shi, delete the EXE, and optionally delete:
+If installed through the setup EXE, uninstall from Windows Apps or run `Talk Dat Shi Uninstaller.exe` from the install folder. The custom uninstaller removes installed app files, shortcuts, startup entry, and Windows registration.
+
+Private local user data is kept by default. Select the uninstaller option to remove it only when you truly want to delete:
 
 ```text
 %APPDATA%\TalkDatShi

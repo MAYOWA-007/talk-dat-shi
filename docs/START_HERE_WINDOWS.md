@@ -2,11 +2,12 @@
 
 ## Fast Path
 
-1. Run `Talk Dat Shi.exe`.
-2. In setup, choose a wired provider such as Deepgram, OpenAI, ElevenLabs, AssemblyAI, or Gemini.
-3. Paste your own provider API key.
-4. Save setup.
-5. Open Notepad and test one sentence.
+1. If you downloaded the setup EXE, run `Talk-Dat-Shi-Setup.exe` and leave "Launch after install" enabled.
+2. If you downloaded the portable ZIP, run `Talk Dat Shi.exe`.
+3. In setup, choose a wired provider such as Deepgram, OpenAI, ElevenLabs, AssemblyAI, or Gemini.
+4. Paste your own provider API key.
+5. Save setup.
+6. Open Notepad and test one sentence.
 
 ## Controls
 
@@ -34,3 +35,4 @@ The microphone does not open until you trigger dictation.
 - If nothing pastes, check Settings > Core and make sure auto paste is enabled.
 - If transcription fails, check Settings > Providers for the provider key, model, API base, and adapter status.
 - If the pill blocks something, hover over it for two seconds and it fades translucent.
+- If you used the installer, remove the app from Windows Apps. The custom uninstaller keeps private local data unless you select the removal option.

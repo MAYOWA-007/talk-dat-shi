@@ -42,13 +42,9 @@ jobs:
           Copy-Item "docs\PROVIDERS.md" "release\portable\PROVIDERS.md"
           Compress-Archive -Path "release\portable\*" -DestinationPath "release\Talk-Dat-Shi-Windows-Portable.zip" -Force
 
-      - name: Install Inno Setup
+      - name: Build custom glass installer
         shell: powershell
-        run: choco install innosetup --no-progress -y
-
-      - name: Build installer
-        shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File .\build-installer.ps1 -SkipExeBuild
+        run: powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1 -SkipExeBuild
 
       - name: Create checksums
         shell: powershell
@@ -86,7 +82,7 @@ jobs:
           body: |
             ## Download
 
-            - `Talk-Dat-Shi-Setup.exe` is the recommended Windows installer.
+            - `Talk-Dat-Shi-Setup.exe` is the recommended custom glass Windows installer.
             - `Talk-Dat-Shi-Windows-Portable.zip` is the no-installer portable build.
 
             ## First Run

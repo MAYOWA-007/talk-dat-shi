@@ -56,13 +56,15 @@ git push origin v0.1.0
 
 5. Confirm GitHub Actions ran `Build Windows Release`.
 6. Confirm the GitHub Release has:
-   - `Talk-Dat-Shi-Setup.exe`
+   - `Talk-Dat-Shi-Setup.exe` custom glass installer
    - `Talk-Dat-Shi-Windows-Portable.zip`
    - `SHA256SUMS.txt`
 7. Download the release from GitHub on a clean machine or temp folder.
-8. Confirm onboarding appears on a fresh config with no API key.
-9. Confirm Status shows the app idle and `session_active: False`.
-10. Confirm dictation only starts after a trigger or pill click.
+8. Run the installer and confirm it creates Start/Desktop shortcuts, optional startup remains off unless selected, and Windows Apps shows the uninstaller.
+9. Confirm onboarding appears on a fresh config with no API key.
+10. Confirm Status shows the app idle and `session_active: False`.
+11. Confirm dictation only starts after a trigger or pill click.
+12. Run the custom uninstaller and confirm `%APPDATA%\TalkDatShi` is kept unless the private-data removal option is selected.
 
 ### Local Release Build
 
@@ -73,10 +75,10 @@ git push origin v0.1.0
 powershell -ExecutionPolicy Bypass -File .\build-exe.ps1
 ```
 
-3. Build the installer:
+3. Build the custom glass installer:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1
 ```
 
 4. Launch the built EXE locally.
@@ -94,6 +96,7 @@ powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 
 - The repo should contain source and intentional assets only.
 - The installer should never bake in a provider key.
+- The uninstaller should keep private user data by default.
 - User keys belong only in local AppData config or environment variables.
 - Logs should not include API key values.
 - The app should not open a microphone or provider connection until a trigger is pressed.
