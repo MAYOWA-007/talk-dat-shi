@@ -72,6 +72,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "restore_clipboard_after_paste": False,
         "press_enter_command": True,
         "play_sounds": True,
+        "mute_output_while_recording": True,
     },
     "cleanup": {
         "level": "high",
@@ -118,8 +119,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wave_loop_end": 50,
         "active_frame_ms": 12,
         "idle_frame_ms": 33,
-        "resize_frame_ms": 8,
-        "resize_steps": 8,
+        "resize_frame_ms": 6,
+        "resize_steps": 22,
         "active_loop_seconds": 2.6,
         "idle_loop_seconds": 8.0,
         "bottom_margin": 68,
@@ -127,6 +128,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "error_hold_ms": 5200,
         "fixed_position": True,
         "no_activate": True,
+        "hide_over_fullscreen_media": True,
+        "fullscreen_poll_ms": 450,
+        "fullscreen_tolerance_px": 8,
     },
     "privacy": {
         "save_audio": False,
@@ -139,6 +143,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "onboarding": {
         "completed": False,
+    },
+    "updates": {
+        "check_on_start": True,
+        "auto_download": False,
+        "current_version": "0.1.0",
+        "last_checked_at": 0,
+        "latest_version": "",
+        "latest_release_url": "",
     },
 }
 

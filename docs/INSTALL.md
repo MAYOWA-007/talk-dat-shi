@@ -21,6 +21,16 @@ The release assets do not contain API keys, dictionaries, snippets, private conf
 
 The installer does not contain API keys. It installs the app executable, local help docs, Start/Desktop shortcuts, optional startup shortcut, and a matching custom glass uninstaller registered in Windows Apps.
 
+## Updates
+
+The installed app records its current version in local config. Use Settings > Core, Status, or the tray menu to check the latest public GitHub Release. When a newer version exists, Talk Dat Shi downloads the official `Talk-Dat-Shi-Setup.exe` to:
+
+```text
+%APPDATA%\TalkDatShi\updates
+```
+
+Then it launches the installer so the same custom glass install flow updates the app. Startup update checks are on by default; automatic installer download can be enabled in Settings > Core.
+
 ## Portable EXE
 
 1. Download `Talk-Dat-Shi-Windows-Portable.zip`.

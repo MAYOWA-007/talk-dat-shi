@@ -15,9 +15,12 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Panic stop with `Ctrl+Win+Esc`.
 - Animated bottom overlay that is idle until activated.
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
+- Optional speaker-output mute while recording, with automatic restore on release/cancel/timeout.
+- Fullscreen media/game guard hides the idle pill until you trigger dictation.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
 - Right-click overlay menu for Settings, History, and a tabbed local Scratchpad.
 - Glass settings UI with 10 named theme families, dark/light variants, and live theme preview.
+- Version tracking plus GitHub Release update checks and installer download from inside the app.
 - Local transcript history and live draft files.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
 - Provider framework with Deepgram streaming plus several batch transcription adapters.
@@ -34,6 +37,12 @@ Launch Talk Dat Shi, complete setup with your own provider key, then test in Not
 The setup EXE uses a custom glass installer. It installs per-user under `%LOCALAPPDATA%\Programs\Talk Dat Shi`, creates Start/Desktop shortcuts, optionally starts with Windows, registers a matching glass uninstaller in Windows Apps, and never includes API keys or private user data.
 
 The portable ZIP includes `START-HERE.md`, `INSTALL.md`, and `PROVIDERS.md`.
+
+## Updates
+
+Talk Dat Shi tracks its installed app version locally and checks the public GitHub Releases feed when update checks are enabled. Settings > Core and the tray menu can check for the latest release, download `Talk-Dat-Shi-Setup.exe` into `%APPDATA%\TalkDatShi\updates`, and launch the installer.
+
+Automatic startup checks are enabled by default. Automatic installer download is available as a setting, but it is off by default so users choose when to run a new installer.
 
 ## Run From Source
 

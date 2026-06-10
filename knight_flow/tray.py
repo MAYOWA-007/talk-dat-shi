@@ -42,6 +42,7 @@ class TrayController:
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Settings", lambda _icon, _item: self._call("settings")),
                 pystray.MenuItem("Status", lambda _icon, _item: self._call("status")),
+                pystray.MenuItem("Check for updates", lambda _icon, _item: self._call("check_updates")),
                 pystray.MenuItem("History", lambda _icon, _item: self._call("history")),
                 pystray.MenuItem("Scratchpad", lambda _icon, _item: self._call("scratchpad")),
                 pystray.Menu.SEPARATOR,

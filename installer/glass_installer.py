@@ -21,9 +21,12 @@ except ImportError:  # pragma: no cover - this installer is Windows-only.
 
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
+try:
+    from knight_flow.version import APP_VERSION
+except Exception:  # pragma: no cover - standalone installer fallback.
+    APP_VERSION = "0.1.0"
 
 APP_NAME = "Talk Dat Shi"
-APP_VERSION = "0.1.0"
 PUBLISHER = "MAYOWA-007"
 APP_EXE_NAME = "Talk Dat Shi.exe"
 UNINSTALL_EXE_NAME = "Talk Dat Shi Uninstaller.exe"

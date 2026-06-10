@@ -25,6 +25,9 @@ from .text_pipeline import (
     unified_diff,
 )
 from .tray import TrayController
+from .updater import UpdateError, check_for_update, download_installer, launch_installer, record_version_seen
+from .version import APP_RELEASES_URL, APP_VERSION
+from .windows_audio import OutputMuteGuard
 
 
 log = logging.getLogger(__name__)
@@ -43,6 +46,11 @@ class TalkDatShiApp:
         self.last_transcript = ""
         self.last_original = ""
         self.last_diff = ""
+        self.output_mute_guard = OutputMuteGuard()
+        self.update_lock = threading.Lock()
+        self.update_in_progress = False
+        record_version_seen(self.config)
+        save_config(self.config)
 
         callbacks = {
             "hands_free": self.toggle_hands_free,
@@ -66,6 +74,7 @@ class TalkDatShiApp:
             "settings": self.open_settings,
             "status": self.open_status,
             "history": self.open_history,
+            "check_updates": self.check_updates,
             "status_provider": self.status_snapshot,
         }
         self.overlay = Overlay(self.config, callbacks)
@@ -95,6 +104,8 @@ class TalkDatShiApp:
         self.overlay.force_visible()
         if self.needs_onboarding():
             self.overlay.root.after(450, self.overlay.open_onboarding)
+        if bool(self.config.get("updates", {}).get("check_on_start", True)):
+            self.overlay.root.after(2600, lambda: self.check_updates(silent=True))
         self.overlay.run()
 
     def needs_onboarding(self) -> bool:
@@ -178,6 +189,7 @@ class TalkDatShiApp:
                 on_error=lambda error, t=token: self.on_session_error(t, error),
             )
             self.session = session
+            self.begin_activation_guards()
 
         try:
             session.start()
@@ -188,6 +200,7 @@ class TalkDatShiApp:
                     self.session = None
                     self.session_token = None
                     self.session_chime_token = None
+            self.release_activation_guards()
             self.overlay.set_state("error", f"Could not start {provider.label}: {exc}")
             log.exception("could not start STT provider=%s model=%s", provider_id, model_id)
 
@@ -210,6 +223,7 @@ class TalkDatShiApp:
             session = self.session
         if session is None:
             return
+        self.release_activation_guards()
         self.overlay.set_state("processing", "Finalizing. Mic closing.")
         self.play_sound("off")
         log.info("session stop requested")
@@ -223,6 +237,7 @@ class TalkDatShiApp:
             self.session_chime_token = None
             self.session_mode = "idle"
             self.session_control = "idle"
+        self.release_activation_guards()
         if session:
             session.cancel()
             self.play_sound("off")
@@ -277,6 +292,7 @@ class TalkDatShiApp:
     def on_session_error(self, token: object, error: str) -> None:
         if not self.is_current(token):
             return
+        self.release_activation_guards()
         provider_id = selected_provider_id(self.config)
         self.overlay.set_state("error", f"{provider_label(provider_id)} error: {preview(error, 82)}")
         log.error("STT error provider=%s: %s", provider_id, error)
@@ -291,6 +307,7 @@ class TalkDatShiApp:
             self.session_mode = "idle"
             self.session_control = "idle"
 
+        self.release_activation_guards()
         self.overlay.set_level(0)
         raw_text = raw_text.strip()
         self.write_live_draft(mode, raw_text, True)
@@ -446,6 +463,88 @@ class TalkDatShiApp:
     def open_history(self) -> None:
         self.overlay.root.after(0, self.overlay.open_history)
 
+    def check_updates(self, *, silent: bool = False, install: bool = True) -> None:
+        with self.update_lock:
+            if self.update_in_progress:
+                if not silent:
+                    self.overlay.set_state("processing", "Already checking for updates.")
+                return
+            self.update_in_progress = True
+
+        if not silent:
+            self.overlay.set_state("processing", "Checking GitHub releases for updates.")
+
+        def finish(message: str, detail: str = "", *, state: str = "captured") -> None:
+            if silent:
+                return
+            self.overlay.root.after(0, lambda: self.overlay.set_state(state, message, detail))
+
+        def worker() -> None:
+            try:
+                updates = self.config.setdefault("updates", {})
+                info = check_for_update(APP_VERSION)
+                updates["last_checked_at"] = int(time.time())
+                updates["latest_version"] = info.latest_version
+                updates["latest_release_url"] = info.release_url
+                save_config(self.config)
+                if not info.available:
+                    finish(f"Talk Dat Shi is up to date. v{APP_VERSION}")
+                    return
+                if not install:
+                    finish(
+                        f"Update available: v{info.latest_version}",
+                        info.release_url,
+                    )
+                    return
+
+                auto_download = bool(updates.get("auto_download", False))
+                if silent and not auto_download:
+                    finish(
+                        f"Update available: v{info.latest_version}",
+                        "Open Settings or Status to install the latest public release.",
+                    )
+                    return
+                if not info.installer_url:
+                    webbrowser.open(info.release_url or APP_RELEASES_URL)
+                    finish(
+                        f"Update available: v{info.latest_version}",
+                        "Opened the GitHub release because no setup EXE was attached.",
+                    )
+                    return
+
+                progress_message = {"last": 0}
+
+                def progress(downloaded: int, total: int) -> None:
+                    if silent:
+                        return
+                    if total <= 0:
+                        return
+                    percent = int((downloaded / total) * 100)
+                    if percent >= progress_message["last"] + 12:
+                        progress_message["last"] = percent
+                        self.overlay.root.after(
+                            0,
+                            lambda p=percent: self.overlay.set_state(
+                                "processing", f"Downloading update. {p}%"
+                            ),
+                        )
+
+                installer = download_installer(info, progress=progress)
+                launch_installer(installer)
+                updates["last_installer_path"] = str(installer)
+                save_config(self.config)
+                finish(
+                    f"Update v{info.latest_version} downloaded.",
+                    "The installer has been launched.",
+                )
+            except UpdateError as error:
+                finish("Update check failed.", str(error), state="error")
+            finally:
+                with self.update_lock:
+                    self.update_in_progress = False
+
+        threading.Thread(target=worker, name="TalkDatShiUpdater", daemon=True).start()
+
     def show_overlay(self) -> None:
         self.overlay.show()
 
@@ -470,6 +569,7 @@ class TalkDatShiApp:
             session_control = self.session_control
         return {
             "app": "running",
+            "version": APP_VERSION,
             "overlay_state": self.overlay.state,
             "session_active": session is not None,
             "session_running": bool(session and session.running),
@@ -479,15 +579,30 @@ class TalkDatShiApp:
             "model": selected_model_id(self.config, selected_provider_id(self.config)),
             "language": self.config.get("deepgram", {}).get("language", "en-US"),
             "auto_paste": bool(self.config.get("dictation", {}).get("auto_paste", True)),
+            "mute_output_while_recording": bool(self.config.get("dictation", {}).get("mute_output_while_recording", True)),
+            "hide_over_fullscreen_media": bool(self.config.get("overlay", {}).get("hide_over_fullscreen_media", True)),
             "save_history": bool(self.config.get("privacy", {}).get("save_history", True)),
             "config_path": str(config_path()),
             "history_path": str(history_path()),
             "live_draft_path": str(live_draft_path()),
             "full_history_path": str(full_history_path()),
+            "update_check_on_start": bool(self.config.get("updates", {}).get("check_on_start", True)),
+            "update_auto_download": bool(self.config.get("updates", {}).get("auto_download", False)),
+            "update_latest_version": str(self.config.get("updates", {}).get("latest_version", "")),
+            "update_latest_release_url": str(self.config.get("updates", {}).get("latest_release_url", "")),
         }
 
     def play_sound(self, kind: str) -> None:
         play_chime(kind, enabled=bool(self.config.get("dictation", {}).get("play_sounds", True)))
+
+    def begin_activation_guards(self) -> None:
+        dictation = self.config.get("dictation", {})
+        self.overlay.set_session_visible(True)
+        self.output_mute_guard.start(enabled=bool(dictation.get("mute_output_while_recording", True)))
+
+    def release_activation_guards(self) -> None:
+        self.output_mute_guard.stop()
+        self.overlay.set_session_visible(False)
 
     def write_live_draft(self, mode: str, text: str, is_final: bool) -> None:
         text = text.strip()
@@ -594,6 +709,7 @@ class TalkDatShiApp:
             self.session_token = None
         if session:
             session.cancel()
+        self.release_activation_guards()
         self.hotkeys.stop()
         self.tray.stop()
         self.overlay.root.after(0, self.overlay.root.destroy)

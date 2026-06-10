@@ -16,6 +16,9 @@
 - Click the pill again, or press a trigger combo, to stop.
 - Right-click the pill for Settings, History, and Scratchpad.
 - Settings > Core changes the glass menu theme live while the window is open.
+- Settings > Dictation can mute speaker output while recording, then restore it when recording stops.
+- Settings > Overlay can hide the idle pill while a game or video is fullscreen.
+- Settings > Core shows the installed version and can check/install the latest GitHub release.
 - Use `Ctrl+Win+Esc` as panic stop.
 
 ## Privacy
@@ -29,6 +32,8 @@ Your keys, provider options, dictionary, snippets, transcript history, live draf
 ```
 
 The microphone does not open until you trigger dictation.
+When speaker-output muting is enabled, only Windows playback is muted; microphone input remains available for dictation.
+Update installers are downloaded only from the public GitHub Releases page and saved under `%APPDATA%\TalkDatShi\updates`.
 
 ## Troubleshooting
 

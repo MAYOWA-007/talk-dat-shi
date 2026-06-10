@@ -8,6 +8,7 @@ import sys
 import tkinter as tk
 import time
 from collections.abc import Callable
+from ctypes import wintypes
 from pathlib import Path
 from tkinter import ttk
 from typing import Any
@@ -32,6 +33,7 @@ from .stt_registry import (
     selected_variant,
     sync_legacy_deepgram,
 )
+from .version import APP_VERSION
 
 
 Callback = Callable[[], None]
@@ -43,6 +45,15 @@ class RECT(ctypes.Structure):
         ("top", ctypes.c_long),
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long),
+    ]
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", wintypes.DWORD),
     ]
 
 
@@ -427,6 +438,8 @@ class Overlay:
         self.opacity = float(overlay_config.get("opacity", 0.94))
         self.hover_fade_delay_ms = int(overlay_config.get("hover_fade_delay_ms", 2000))
         self.hover_fade_opacity = float(overlay_config.get("hover_fade_opacity", 0.38))
+        self.hide_over_fullscreen_media = bool(overlay_config.get("hide_over_fullscreen_media", True))
+        self.fullscreen_poll_ms = int(overlay_config.get("fullscreen_poll_ms", 450))
         self.current_alpha = self.opacity
 
         self.root = tk.Tk()
@@ -469,6 +482,7 @@ class Overlay:
         self.context_menu_after_id: str | None = None
         self.context_menu_hover = ""
         self.settings_header_photo: ImageTk.PhotoImage | None = None
+        self.settings_header_photos: dict[int, ImageTk.PhotoImage] = {}
         self.visual_photo: ImageTk.PhotoImage | None = None
         self.visual_canvas_item: int | None = None
         self.flow_loop_strip: Image.Image | None = None
@@ -483,6 +497,8 @@ class Overlay:
         self.last_flow_render_key: tuple[int, int] | None = None
         self.last_animation_tick = time.perf_counter()
         self.utility_drag_origin: tuple[int, int, int, int] | None = None
+        self.fullscreen_hidden = False
+        self.fullscreen_session_visible = False
         self.compact_wave_strip: Image.Image | None = None
         self.compact_wave_reference: Image.Image | None = None
         self.compact_wave_meta: dict[str, int | float] = {}
@@ -519,6 +535,7 @@ class Overlay:
         self.root.after(80, self._post_init)
         self.root.after(220, self.force_visible)
         self.root.after(560, self._warm_visual_caches)
+        self.root.after(480, self._refresh_fullscreen_visibility)
         self.root.after(80, self._animate)
 
     def _asset_path(self, filename: str) -> Path:
@@ -669,6 +686,10 @@ class Overlay:
         self.opacity = float(overlay_config.get("opacity", self.opacity))
         self.hover_fade_delay_ms = int(overlay_config.get("hover_fade_delay_ms", self.hover_fade_delay_ms))
         self.hover_fade_opacity = float(overlay_config.get("hover_fade_opacity", self.hover_fade_opacity))
+        self.hide_over_fullscreen_media = bool(
+            overlay_config.get("hide_over_fullscreen_media", self.hide_over_fullscreen_media)
+        )
+        self.fullscreen_poll_ms = int(overlay_config.get("fullscreen_poll_ms", self.fullscreen_poll_ms))
         self.wave_loop_start = int(overlay_config.get("wave_loop_start", self.wave_loop_start))
         self.wave_loop_end = int(overlay_config.get("wave_loop_end", self.wave_loop_end))
         self.idle_render_cache.clear()
@@ -773,7 +794,7 @@ class Overlay:
             self._apply_geometry(target_width, target_height)
             return
 
-        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 8), 4, 14))
+        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 22), 18, 36))
         self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, steps)
 
     def _animate_resize(
@@ -785,12 +806,12 @@ class Overlay:
         step: int,
         total_steps: int,
     ) -> None:
-        progress = min(1.0, step / max(1, total_steps))
+        progress = min(1.0, (step + 1) / max(1, total_steps))
         eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10)
         width = int(start_width + (target_width - start_width) * eased)
         height = int(start_height + (target_height - start_height) * eased)
         self._apply_geometry(width, height)
-        if step >= total_steps:
+        if progress >= 1.0:
             self.resize_after_id = None
             return
         self.resize_after_id = self.root.after(
@@ -876,6 +897,132 @@ class Overlay:
     def hide(self) -> None:
         self.root.after(0, self.root.withdraw)
 
+    def set_session_visible(self, visible: bool) -> None:
+        self.root.after(0, lambda value=bool(visible): self._set_session_visible_now(value))
+
+    def _set_session_visible_now(self, visible: bool) -> None:
+        self.fullscreen_session_visible = visible
+        if visible:
+            self.fullscreen_hidden = False
+            self.force_visible()
+            return
+        self._sync_fullscreen_visibility()
+
+    def _own_window_handles(self) -> set[int]:
+        handles: set[int] = set()
+        user32 = ctypes.windll.user32
+        windows: list[tk.Misc] = [self.root]
+        windows.extend(window for window in self.utility_windows.values() if window.winfo_exists())
+        if self.context_menu_window is not None and self.context_menu_window.winfo_exists():
+            windows.append(self.context_menu_window)
+        for window in windows:
+            try:
+                hwnd = int(window.winfo_id())
+            except Exception:
+                continue
+            if not hwnd:
+                continue
+            handles.add(hwnd)
+            try:
+                ancestor = int(user32.GetAncestor(hwnd, 2))
+                if ancestor:
+                    handles.add(ancestor)
+            except Exception:
+                pass
+            try:
+                parent = int(user32.GetParent(hwnd))
+                if parent:
+                    handles.add(parent)
+            except Exception:
+                pass
+        return handles
+
+    def _foreground_class_name(self, hwnd: int) -> str:
+        try:
+            buffer = ctypes.create_unicode_buffer(128)
+            ctypes.windll.user32.GetClassNameW(hwnd, buffer, len(buffer))
+            return str(buffer.value)
+        except Exception:
+            return ""
+
+    def _foreground_is_fullscreen(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = int(user32.GetForegroundWindow())
+            if not hwnd or hwnd in self._own_window_handles():
+                return False
+            class_name = self._foreground_class_name(hwnd)
+            if class_name in {"Progman", "WorkerW", "Shell_TrayWnd"}:
+                return False
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+                return False
+
+            rect = RECT()
+            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return False
+            width = int(rect.right - rect.left)
+            height = int(rect.bottom - rect.top)
+            if width < 320 or height < 240:
+                return False
+
+            monitor = user32.MonitorFromWindow(hwnd, 2)
+            if not monitor:
+                return False
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                return False
+            monitor_rect = info.rcMonitor
+            monitor_width = int(monitor_rect.right - monitor_rect.left)
+            monitor_height = int(monitor_rect.bottom - monitor_rect.top)
+            if monitor_width <= 0 or monitor_height <= 0:
+                return False
+
+            tolerance = int(self._clamp(self.config.get("overlay", {}).get("fullscreen_tolerance_px", 8), 0, 32))
+            covers_monitor = (
+                rect.left <= monitor_rect.left + tolerance
+                and rect.top <= monitor_rect.top + tolerance
+                and rect.right >= monitor_rect.right - tolerance
+                and rect.bottom >= monitor_rect.bottom - tolerance
+            )
+            if not covers_monitor:
+                return False
+            window_area = max(0, width) * max(0, height)
+            monitor_area = monitor_width * monitor_height
+            return window_area >= monitor_area * 0.88
+        except Exception:
+            return False
+
+    def _should_hide_for_fullscreen(self) -> bool:
+        if not self.hide_over_fullscreen_media:
+            return False
+        if self.fullscreen_session_visible or self.state in LIVE_STATES:
+            return False
+        return self._foreground_is_fullscreen()
+
+    def _sync_fullscreen_visibility(self) -> None:
+        should_hide = self._should_hide_for_fullscreen()
+        if should_hide:
+            if not self.fullscreen_hidden:
+                self.fullscreen_hidden = True
+                try:
+                    self.root.withdraw()
+                except Exception:
+                    pass
+            return
+        if self.fullscreen_hidden:
+            self.fullscreen_hidden = False
+            self.force_visible()
+
+    def _refresh_fullscreen_visibility(self) -> None:
+        try:
+            self._sync_fullscreen_visibility()
+        finally:
+            delay = int(self._clamp(self.fullscreen_poll_ms, 120, 3000))
+            self.root.after(delay, self._refresh_fullscreen_visibility)
+
     def _on_enter(self, _event: tk.Event | None = None) -> None:
         self._set_hovered(True)
 
@@ -953,6 +1100,7 @@ class Overlay:
         self._set_compact(state == "idle", animate=True)
         self._schedule_idle_return(state)
         self._repaint()
+        self._sync_fullscreen_visibility()
 
     def _schedule_idle_return(self, state: str) -> None:
         if self.idle_after_id:
@@ -2446,6 +2594,10 @@ class Overlay:
         panel = Image.alpha_composite(panel, sheen)
         field = Image.alpha_composite(field, panel)
         self.settings_header_photo = ImageTk.PhotoImage(field.convert("RGB"))
+        try:
+            self.settings_header_photos[int(canvas.winfo_id())] = self.settings_header_photo
+        except tk.TclError:
+            pass
         canvas.delete("all")
         canvas.configure(bg=palette["bg"], highlightthickness=0, bd=0)
         canvas.create_image(0, 0, image=self.settings_header_photo, anchor="nw")
@@ -2483,6 +2635,34 @@ class Overlay:
             font=("Segoe UI Semibold", 9),
         )
 
+    def _schedule_settings_header_animation(
+        self,
+        canvas: tk.Canvas,
+        theme_getter: Callable[[], str],
+        height: int,
+        *,
+        title: str = "Talk Dat Shi",
+        subtitle_getter: Callable[[], str | None] | None = None,
+    ) -> None:
+        def tick() -> None:
+            try:
+                if not bool(canvas.winfo_exists()):
+                    return
+                subtitle = subtitle_getter() if subtitle_getter else None
+                self._draw_settings_header(
+                    canvas,
+                    max(1, canvas.winfo_width()),
+                    height,
+                    theme_getter(),
+                    title=title,
+                    subtitle=subtitle,
+                )
+                canvas.after(max(16, min(42, self.idle_frame_ms)), tick)
+            except tk.TclError:
+                pass
+
+        tick()
+
     def open_onboarding(self) -> None:
         self.force_visible()
         ui = self.config.setdefault("ui", {})
@@ -2519,7 +2699,13 @@ class Overlay:
 
         header.bind("<Configure>", redraw_header)
         header.bind("<ButtonPress-1>", header_click, add="+")
-        redraw_header()
+        self._schedule_settings_header_animation(
+            header,
+            lambda: theme,
+            136,
+            title="Talk Dat Shi Setup",
+            subtitle_getter=lambda: "Choose a speech provider, paste your own key, then trigger only when you want to talk.",
+        )
 
         panel = ttk.Frame(window, padding=18, style="Flow.TFrame")
         panel.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
@@ -2768,6 +2954,7 @@ class Overlay:
         privacy = self.config.setdefault("privacy", {})
         dictation_config = self.config.setdefault("dictation", {})
         overlay_config = self.config.setdefault("overlay", {})
+        updates_config = self.config.setdefault("updates", {})
         transforms = self.config.setdefault("transforms", {})
         ollama = transforms.setdefault("ollama", {})
 
@@ -2780,7 +2967,7 @@ class Overlay:
             return None
 
         header.bind("<ButtonPress-1>", header_click, add="+")
-        redraw_header()
+        self._schedule_settings_header_animation(header, lambda: theme_var.get(), 96)
 
         key_var = tk.StringVar(value=str(deepgram.get("api_key", "")))
         model_var = tk.StringVar(value=str(deepgram.get("model", "nova-3")))
@@ -2790,6 +2977,9 @@ class Overlay:
         play_sounds_var = tk.BooleanVar(value=bool(dictation_config.get("play_sounds", True)))
         auto_paste_var = tk.BooleanVar(value=bool(dictation_config.get("auto_paste", True)))
         smart_space_var = tk.BooleanVar(value=bool(dictation_config.get("smart_leading_space", True)))
+        check_updates_on_start_var = tk.BooleanVar(value=bool(updates_config.get("check_on_start", True)))
+        auto_download_updates_var = tk.BooleanVar(value=bool(updates_config.get("auto_download", False)))
+        latest_version_var = tk.StringVar(value=str(updates_config.get("latest_version") or "not checked yet"))
 
         deepgram_model_options = [model.id for model in PROVIDER_BY_ID["deepgram"].models]
 
@@ -2954,12 +3144,22 @@ class Overlay:
         theme_box = combo(core_tab, theme_var, self._settings_theme_options(), 28)
         theme_box.configure(state="readonly")
         add_row(core_tab, 4, "Settings menu theme", theme_box)
-        check(core_tab, "Save local transcript history", save_history_var, 5)
-        check(core_tab, "Play start and stop sounds", play_sounds_var, 6)
-        check(core_tab, "Auto paste transcript", auto_paste_var, 7)
-        check(core_tab, "Smart leading space", smart_space_var, 8)
+        add_row(core_tab, 5, "Installed version", ttk.Label(core_tab, text=f"v{APP_VERSION}", style="Flow.TLabel"))
+        add_row(core_tab, 6, "Latest seen", ttk.Label(core_tab, textvariable=latest_version_var, style="Flow.TLabel"))
+        add_row(
+            core_tab,
+            7,
+            "Updater",
+            ttk.Button(core_tab, text="Check / install latest", command=self._callback("check_updates"), style="Flow.TButton"),
+        )
+        check(core_tab, "Check for updates on start", check_updates_on_start_var, 8)
+        check(core_tab, "Auto-download update installer when a new release exists", auto_download_updates_var, 9)
+        check(core_tab, "Save local transcript history", save_history_var, 10)
+        check(core_tab, "Play start and stop sounds", play_sounds_var, 11)
+        check(core_tab, "Auto paste transcript", auto_paste_var, 12)
+        check(core_tab, "Smart leading space", smart_space_var, 13)
         ttk.Label(core_tab, text=f"Config: {config_path()}", wraplength=850, style="Flow.Muted.TLabel").grid(
-            row=9, column=0, columnspan=2, sticky="w", pady=(16, 0)
+            row=14, column=0, columnspan=2, sticky="w", pady=(16, 0)
         )
 
         def string_var(value: Any) -> tk.StringVar:
@@ -3012,6 +3212,7 @@ class Overlay:
         hold_silence_var = string_var(dictation_config.get("hold_silence_timeout_seconds", 300))
         restore_clipboard_var = tk.BooleanVar(value=bool(dictation_config.get("restore_clipboard_after_paste", False)))
         press_enter_var = tk.BooleanVar(value=bool(dictation_config.get("press_enter_command", True)))
+        mute_output_var = tk.BooleanVar(value=bool(dictation_config.get("mute_output_while_recording", True)))
 
         add_row(dictation_tab, 0, "Tail capture ms", entry(dictation_tab, tail_var, 12))
         add_row(dictation_tab, 1, "Hold debounce ms", entry(dictation_tab, debounce_var, 12))
@@ -3023,6 +3224,7 @@ class Overlay:
         add_row(dictation_tab, 7, "Hold silence", entry(dictation_tab, hold_silence_var, 12))
         check(dictation_tab, "Restore clipboard after paste", restore_clipboard_var, 8)
         check(dictation_tab, "Spoken press-enter command", press_enter_var, 9)
+        check(dictation_tab, "Mute speaker output while recording", mute_output_var, 10)
 
         show_start_var = tk.BooleanVar(value=bool(overlay_config.get("show_on_start", True)))
         opacity_var = string_var(overlay_config.get("opacity", 0.94))
@@ -3037,7 +3239,8 @@ class Overlay:
         bottom_margin_var = string_var(overlay_config.get("bottom_margin", 68))
         active_frame_var = string_var(overlay_config.get("active_frame_ms", 16))
         idle_frame_var = string_var(overlay_config.get("idle_frame_ms", 33))
-        resize_frame_var = string_var(overlay_config.get("resize_frame_ms", 12))
+        resize_frame_var = string_var(overlay_config.get("resize_frame_ms", 6))
+        resize_steps_var = string_var(overlay_config.get("resize_steps", 22))
         active_loop_var = string_var(overlay_config.get("active_loop_seconds", 3.84))
         idle_loop_var = string_var(overlay_config.get("idle_loop_seconds", 8.0))
         result_hold_var = string_var(overlay_config.get("result_hold_ms", 900))
@@ -3046,6 +3249,8 @@ class Overlay:
         wave_end_var = string_var(overlay_config.get("wave_loop_end", 50))
         fixed_var = tk.BooleanVar(value=bool(overlay_config.get("fixed_position", True)))
         no_activate_var = tk.BooleanVar(value=bool(overlay_config.get("no_activate", True)))
+        fullscreen_hide_var = tk.BooleanVar(value=bool(overlay_config.get("hide_over_fullscreen_media", True)))
+        fullscreen_poll_var = string_var(overlay_config.get("fullscreen_poll_ms", 450))
 
         add_row(overlay_tab, 0, "Opacity", entry(overlay_tab, opacity_var, 12))
         add_row(overlay_tab, 1, "Hover fade delay ms", entry(overlay_tab, hover_fade_delay_var, 12))
@@ -3060,15 +3265,18 @@ class Overlay:
         add_row(overlay_tab, 10, "Active frame ms", entry(overlay_tab, active_frame_var, 12))
         add_row(overlay_tab, 11, "Idle frame ms", entry(overlay_tab, idle_frame_var, 12))
         add_row(overlay_tab, 12, "Resize frame ms", entry(overlay_tab, resize_frame_var, 12))
-        add_row(overlay_tab, 13, "Active loop seconds", entry(overlay_tab, active_loop_var, 12))
-        add_row(overlay_tab, 14, "Idle loop seconds", entry(overlay_tab, idle_loop_var, 12))
-        add_row(overlay_tab, 15, "Result hold ms", entry(overlay_tab, result_hold_var, 12))
-        add_row(overlay_tab, 16, "Error hold ms", entry(overlay_tab, error_hold_var, 12))
-        add_row(overlay_tab, 17, "Wave loop start", entry(overlay_tab, wave_start_var, 12))
-        add_row(overlay_tab, 18, "Wave loop end", entry(overlay_tab, wave_end_var, 12))
-        check(overlay_tab, "Show overlay on start", show_start_var, 19)
-        check(overlay_tab, "Always same bottom position", fixed_var, 20)
-        check(overlay_tab, "Do not steal focus", no_activate_var, 21)
+        add_row(overlay_tab, 13, "Resize steps", entry(overlay_tab, resize_steps_var, 12))
+        add_row(overlay_tab, 14, "Active loop seconds", entry(overlay_tab, active_loop_var, 12))
+        add_row(overlay_tab, 15, "Idle loop seconds", entry(overlay_tab, idle_loop_var, 12))
+        add_row(overlay_tab, 16, "Result hold ms", entry(overlay_tab, result_hold_var, 12))
+        add_row(overlay_tab, 17, "Error hold ms", entry(overlay_tab, error_hold_var, 12))
+        add_row(overlay_tab, 18, "Wave loop start", entry(overlay_tab, wave_start_var, 12))
+        add_row(overlay_tab, 19, "Wave loop end", entry(overlay_tab, wave_end_var, 12))
+        check(overlay_tab, "Show overlay on start", show_start_var, 20)
+        check(overlay_tab, "Always same bottom position", fixed_var, 21)
+        check(overlay_tab, "Do not steal focus", no_activate_var, 22)
+        check(overlay_tab, "Hide pill over fullscreen media", fullscreen_hide_var, 23)
+        add_row(overlay_tab, 24, "Fullscreen check ms", entry(overlay_tab, fullscreen_poll_var, 12))
 
         hotkey_entries: dict[str, tk.StringVar] = {}
         hotkey_labels = [
@@ -3290,6 +3498,10 @@ class Overlay:
             dictation_config["hold_silence_timeout_seconds"] = parse_int(hold_silence_var, 300, 1, 60 * 60)
             dictation_config["restore_clipboard_after_paste"] = bool(restore_clipboard_var.get())
             dictation_config["press_enter_command"] = bool(press_enter_var.get())
+            dictation_config["mute_output_while_recording"] = bool(mute_output_var.get())
+            updates_config["check_on_start"] = bool(check_updates_on_start_var.get())
+            updates_config["auto_download"] = bool(auto_download_updates_var.get())
+            updates_config["current_version"] = APP_VERSION
 
             overlay_config["show_on_start"] = bool(show_start_var.get())
             overlay_config["opacity"] = parse_float(opacity_var, 0.94, 0.20, 1.00)
@@ -3304,7 +3516,8 @@ class Overlay:
             overlay_config["bottom_margin"] = parse_int(bottom_margin_var, 68, 0, 400)
             overlay_config["active_frame_ms"] = parse_int(active_frame_var, 16, 8, 200)
             overlay_config["idle_frame_ms"] = parse_int(idle_frame_var, 33, 8, 500)
-            overlay_config["resize_frame_ms"] = parse_int(resize_frame_var, 12, 8, 120)
+            overlay_config["resize_frame_ms"] = parse_int(resize_frame_var, 6, 4, 120)
+            overlay_config["resize_steps"] = parse_int(resize_steps_var, 22, 18, 36)
             overlay_config["active_loop_seconds"] = parse_float(active_loop_var, 3.84, 0.10, 20.0)
             overlay_config["idle_loop_seconds"] = parse_float(idle_loop_var, 8.0, 0.10, 60.0)
             overlay_config["result_hold_ms"] = parse_int(result_hold_var, 900, 0, 30000)
@@ -3313,6 +3526,8 @@ class Overlay:
             overlay_config["wave_loop_end"] = parse_int(wave_end_var, 50, 0, 10000)
             overlay_config["fixed_position"] = bool(fixed_var.get())
             overlay_config["no_activate"] = bool(no_activate_var.get())
+            overlay_config["hide_over_fullscreen_media"] = bool(fullscreen_hide_var.get())
+            overlay_config["fullscreen_poll_ms"] = parse_int(fullscreen_poll_var, 450, 120, 3000)
 
             self.config.setdefault("hotkeys", {}).update(
                 {action: self._parse_shortcuts(var.get()) for action, var in hotkey_entries.items()}
@@ -3417,6 +3632,9 @@ class Overlay:
         controls = tk.Frame(window, bg="#071113")
         controls.pack(fill="x", padx=14, pady=(0, 14))
         ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Check updates", command=self._callback("check_updates"), style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
         ttk.Button(controls, text="Panic stop", command=self._callback("panic"), style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
         refresh()
