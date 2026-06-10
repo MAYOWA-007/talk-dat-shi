@@ -7,7 +7,7 @@ from typing import Any
 from .config import app_dir
 
 
-ICON_VERSION = "flow-lion-roar-2026-06-09-v1"
+ICON_VERSION = "talk-stone-2026-06-10-v1"
 
 
 def _asset_path(filename: str) -> Path:

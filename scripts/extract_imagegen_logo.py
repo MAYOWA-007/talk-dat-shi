@@ -32,7 +32,7 @@ def foreground_mask(image: Image.Image) -> Image.Image:
     return mask
 
 
-def trim_and_square(icon: Image.Image, mask: Image.Image, size: int) -> Image.Image:
+def trim_and_square(icon: Image.Image, mask: Image.Image, size: int, fill: float) -> Image.Image:
     bbox = mask.getbbox()
     if bbox is None:
         raise RuntimeError("Could not find a foreground logo in the source image.")
@@ -49,7 +49,8 @@ def trim_and_square(icon: Image.Image, mask: Image.Image, size: int) -> Image.Im
     transparent.alpha_composite(cropped)
     transparent.putalpha(cropped_mask)
 
-    scale = min(size * 0.86 / transparent.width, size * 0.86 / transparent.height)
+    fill = max(0.72, min(0.98, float(fill)))
+    scale = min(size * fill / transparent.width, size * fill / transparent.height)
     target = (max(1, int(transparent.width * scale)), max(1, int(transparent.height * scale)))
     resized = transparent.resize(target, Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -96,14 +97,15 @@ def save_previews(icon: Image.Image, output_dir: Path) -> None:
     for name, background in backgrounds.items():
         preview = background.copy()
         preview.alpha_composite(icon)
-        preview.convert("RGB").save(output_dir / f"flow-minimal-logo-preview-{name}.jpg", quality=94)
+        preview.convert("RGB").save(output_dir / f"talk-stone-preview-{name}.jpg", quality=94)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
-    parser.add_argument("--out", type=Path, default=Path("branding/imagegen-minimal"))
+    parser.add_argument("--out", type=Path, default=Path("branding/talk-stone"))
     parser.add_argument("--size", type=int, default=2048)
+    parser.add_argument("--fill", type=float, default=0.94)
     args = parser.parse_args()
 
     source = args.source
@@ -112,13 +114,13 @@ def main() -> None:
 
     image = Image.open(source).convert("RGBA")
     mask = foreground_mask(image)
-    icon = trim_and_square(image, mask, args.size)
-    icon.save(output_dir / "flow-minimal-logo-transparent.png", compress_level=3)
+    icon = trim_and_square(image, mask, args.size, args.fill)
+    icon.save(output_dir / "talk-stone-transparent.png", compress_level=3)
     save_previews(icon, output_dir)
     (output_dir / "SOURCE.txt").write_text("Generated via Codex image generation, then alpha-cleaned locally.\n", encoding="utf-8")
 
     alpha = icon.getchannel("A")
-    print("wrote", output_dir / "flow-minimal-logo-transparent.png")
+    print("wrote", output_dir / "talk-stone-transparent.png")
     print("size", icon.size)
     print("alpha bbox", alpha.getbbox())
     print("alpha mean", round(ImageStat.Stat(alpha).mean[0], 2))

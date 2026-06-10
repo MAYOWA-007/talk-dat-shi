@@ -2,6 +2,8 @@
 
 Talk Dat Shi is a Windows-first local dictation overlay. It stays as a small always-on-top animated pill, records only when you trigger it, sends audio to the speech-to-text provider you configure, cleans up the result, and pastes it into the active app.
 
+The visual system has two core pieces: **Talk Stone**, the matte black roman-clay app mark, and **The Pill**, the animated Flow dictation overlay.
+
 This is a bring-your-own-key project. The repository does not include API keys, private config, transcript history, or built binaries.
 
 > Talk Dat Shi is an independent project and is not affiliated with Wispr, Wispr Flow, Deepgram, OpenAI, ElevenLabs, AssemblyAI, Google, or any other provider.
