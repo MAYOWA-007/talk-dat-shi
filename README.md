@@ -17,7 +17,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
 - Right-click overlay menu for Settings, History, and a tabbed local Scratchpad.
-- Glass settings UI with 10 named theme families in dark and light variants.
+- Glass settings UI with 10 named theme families, dark/light variants, and live theme preview.
 - Local transcript history and live draft files.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
 - Provider framework with Deepgram streaming plus several batch transcription adapters.
@@ -98,6 +98,7 @@ Before publishing or tagging a release:
 
 ```powershell
 python .\scripts\prepublish_check.py
+python .\scripts\check_settings_themes.py
 ```
 
 Also read [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md). The scanner is a guardrail, not a substitute for reviewing your commit.

@@ -15,6 +15,7 @@
 - Click the pill to toggle hands-free dictation.
 - Click the pill again, or press a trigger combo, to stop.
 - Right-click the pill for Settings, History, and Scratchpad.
+- Settings > Core changes the glass menu theme live while the window is open.
 - Use `Ctrl+Win+Esc` as panic stop.
 
 ## Privacy

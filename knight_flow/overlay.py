@@ -48,6 +48,355 @@ class RECT(ctypes.Structure):
 
 TRANSPARENT_COLOR = "#010203"
 LIVE_STATES = {"starting", "connected", "listening", "processing", "command"}
+SETTINGS_THEME_FAMILIES = (
+    "Flow",
+    "Ember Glass",
+    "Teal Circuit",
+    "Solar Ribbon",
+    "Crimson Bloom",
+    "Aqua Noir",
+    "Champagne Glass",
+    "Violet Signal",
+    "Graphite Pulse",
+    "Ivory Halo",
+)
+SETTINGS_THEME_PALETTE_KEYS = (
+    "bg",
+    "panel",
+    "surface",
+    "field",
+    "text",
+    "muted",
+    "accent",
+    "accent2",
+    "warm",
+    "button",
+    "select",
+    "stroke",
+    "glass",
+)
+SETTINGS_THEME_PALETTES: dict[str, dict[str, dict[str, str]]] = {
+    "Flow": {
+        "Dark": {
+            "bg": "#061012",
+            "panel": "#0b181b",
+            "surface": "#111f23",
+            "field": "#16272b",
+            "text": "#edf7f3",
+            "muted": "#93aaa5",
+            "accent": "#37e2c0",
+            "accent2": "#ffca68",
+            "warm": "#ff4f73",
+            "button": "#16282d",
+            "select": "#173c39",
+            "stroke": "#244648",
+            "glass": "#091719",
+        },
+        "Light": {
+            "bg": "#eef7f3",
+            "panel": "#f8fffb",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#122420",
+            "muted": "#58706a",
+            "accent": "#008f7f",
+            "accent2": "#b97908",
+            "warm": "#c92b52",
+            "button": "#dcebe6",
+            "select": "#c9efe5",
+            "stroke": "#abcac1",
+            "glass": "#ffffff",
+        },
+    },
+    "Ember Glass": {
+        "Dark": {
+            "bg": "#130c09",
+            "panel": "#1d130f",
+            "surface": "#2a1b15",
+            "field": "#322018",
+            "text": "#fff4e8",
+            "muted": "#d4ad97",
+            "accent": "#ff8a52",
+            "accent2": "#ffe090",
+            "warm": "#15d7c0",
+            "button": "#322019",
+            "select": "#4a2b20",
+            "stroke": "#6d3b29",
+            "glass": "#190f0b",
+        },
+        "Light": {
+            "bg": "#fff1e6",
+            "panel": "#fffaf4",
+            "surface": "#ffffff",
+            "field": "#fffdf9",
+            "text": "#2b1810",
+            "muted": "#7b5d4f",
+            "accent": "#b94c1e",
+            "accent2": "#946108",
+            "warm": "#008b7c",
+            "button": "#f1d9c7",
+            "select": "#ffd9c1",
+            "stroke": "#d4a284",
+            "glass": "#fff8ef",
+        },
+    },
+    "Teal Circuit": {
+        "Dark": {
+            "bg": "#021416",
+            "panel": "#071f22",
+            "surface": "#0e2d31",
+            "field": "#12383d",
+            "text": "#eafffb",
+            "muted": "#91c2bc",
+            "accent": "#23e7ce",
+            "accent2": "#7cf7d4",
+            "warm": "#ffbd6d",
+            "button": "#103035",
+            "select": "#104740",
+            "stroke": "#1a6667",
+            "glass": "#061a1d",
+        },
+        "Light": {
+            "bg": "#e8fbf8",
+            "panel": "#f5fffd",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#0f2928",
+            "muted": "#4d706d",
+            "accent": "#008b81",
+            "accent2": "#168b61",
+            "warm": "#b76513",
+            "button": "#d2f0eb",
+            "select": "#bceee5",
+            "stroke": "#92cfc6",
+            "glass": "#f9fffd",
+        },
+    },
+    "Solar Ribbon": {
+        "Dark": {
+            "bg": "#100f07",
+            "panel": "#1b190c",
+            "surface": "#29240e",
+            "field": "#342c12",
+            "text": "#fff8df",
+            "muted": "#d3bd80",
+            "accent": "#ffd36f",
+            "accent2": "#ff674d",
+            "warm": "#28dcc3",
+            "button": "#332711",
+            "select": "#4b3316",
+            "stroke": "#705324",
+            "glass": "#171308",
+        },
+        "Light": {
+            "bg": "#fff7df",
+            "panel": "#fffdf4",
+            "surface": "#ffffff",
+            "field": "#fffef8",
+            "text": "#2a210c",
+            "muted": "#706239",
+            "accent": "#9d6500",
+            "accent2": "#c43a25",
+            "warm": "#008b7b",
+            "button": "#f2dfad",
+            "select": "#ffe7aa",
+            "stroke": "#d7b767",
+            "glass": "#fffbe9",
+        },
+    },
+    "Crimson Bloom": {
+        "Dark": {
+            "bg": "#16070e",
+            "panel": "#230d16",
+            "surface": "#321520",
+            "field": "#3b1a28",
+            "text": "#fff0f4",
+            "muted": "#d8a2b0",
+            "accent": "#ff466f",
+            "accent2": "#ffc773",
+            "warm": "#31d6c3",
+            "button": "#351723",
+            "select": "#511d2e",
+            "stroke": "#743047",
+            "glass": "#1c0a11",
+        },
+        "Light": {
+            "bg": "#fff0f4",
+            "panel": "#fff9fb",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#32131f",
+            "muted": "#7c5260",
+            "accent": "#bf2149",
+            "accent2": "#a66b08",
+            "warm": "#008c80",
+            "button": "#f3d6df",
+            "select": "#ffd7e3",
+            "stroke": "#d79aac",
+            "glass": "#fff7fa",
+        },
+    },
+    "Aqua Noir": {
+        "Dark": {
+            "bg": "#03101f",
+            "panel": "#071a2e",
+            "surface": "#0d2740",
+            "field": "#12314d",
+            "text": "#edf9ff",
+            "muted": "#99bfd1",
+            "accent": "#3fe8ff",
+            "accent2": "#20d4aa",
+            "warm": "#ff7060",
+            "button": "#112d45",
+            "select": "#0e4a57",
+            "stroke": "#1d657b",
+            "glass": "#061626",
+        },
+        "Light": {
+            "bg": "#eaf8ff",
+            "panel": "#f7fdff",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#102537",
+            "muted": "#527284",
+            "accent": "#007f96",
+            "accent2": "#00896f",
+            "warm": "#bf3a2d",
+            "button": "#d8edf7",
+            "select": "#c5f2f7",
+            "stroke": "#9bc7d8",
+            "glass": "#fbfeff",
+        },
+    },
+    "Champagne Glass": {
+        "Dark": {
+            "bg": "#11100b",
+            "panel": "#1c1a12",
+            "surface": "#29251a",
+            "field": "#302c1f",
+            "text": "#fff8e7",
+            "muted": "#d2c199",
+            "accent": "#e7c989",
+            "accent2": "#fff0bc",
+            "warm": "#16bfa9",
+            "button": "#2f2a1c",
+            "select": "#433923",
+            "stroke": "#6a5b34",
+            "glass": "#17150d",
+        },
+        "Light": {
+            "bg": "#faf3df",
+            "panel": "#fffaf0",
+            "surface": "#ffffff",
+            "field": "#fffef9",
+            "text": "#282111",
+            "muted": "#6e6346",
+            "accent": "#967333",
+            "accent2": "#806006",
+            "warm": "#007f72",
+            "button": "#ebe0bf",
+            "select": "#f5e6bb",
+            "stroke": "#cab574",
+            "glass": "#fff9eb",
+        },
+    },
+    "Violet Signal": {
+        "Dark": {
+            "bg": "#100b1e",
+            "panel": "#1b1230",
+            "surface": "#281b45",
+            "field": "#312253",
+            "text": "#f7f0ff",
+            "muted": "#bfaee2",
+            "accent": "#b88cff",
+            "accent2": "#54dfff",
+            "warm": "#ffcd73",
+            "button": "#2a1e47",
+            "select": "#3f2865",
+            "stroke": "#62469a",
+            "glass": "#160f29",
+        },
+        "Light": {
+            "bg": "#f4eeff",
+            "panel": "#fbf8ff",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#26183b",
+            "muted": "#67587c",
+            "accent": "#7244b8",
+            "accent2": "#007d96",
+            "warm": "#9b6500",
+            "button": "#e5d8f7",
+            "select": "#e3d2ff",
+            "stroke": "#b79bdc",
+            "glass": "#fdfaff",
+        },
+    },
+    "Graphite Pulse": {
+        "Dark": {
+            "bg": "#0b0d12",
+            "panel": "#131720",
+            "surface": "#1f2632",
+            "field": "#262f3d",
+            "text": "#f1f5fb",
+            "muted": "#a9b5c4",
+            "accent": "#8ea4ff",
+            "accent2": "#39d7c6",
+            "warm": "#ffd067",
+            "button": "#222b37",
+            "select": "#26394f",
+            "stroke": "#45576d",
+            "glass": "#10141b",
+        },
+        "Light": {
+            "bg": "#f0f3f7",
+            "panel": "#fbfcfe",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#1a222e",
+            "muted": "#596675",
+            "accent": "#405bbb",
+            "accent2": "#00877c",
+            "warm": "#9b6600",
+            "button": "#dfe6ee",
+            "select": "#d8e5f7",
+            "stroke": "#abb8c8",
+            "glass": "#ffffff",
+        },
+    },
+    "Ivory Halo": {
+        "Dark": {
+            "bg": "#12110d",
+            "panel": "#1d1b15",
+            "surface": "#2b281f",
+            "field": "#342f23",
+            "text": "#fffaf0",
+            "muted": "#cfc4ac",
+            "accent": "#d7b56d",
+            "accent2": "#72d9cb",
+            "warm": "#ff8666",
+            "button": "#302c20",
+            "select": "#3d3a26",
+            "stroke": "#665d3b",
+            "glass": "#181711",
+        },
+        "Light": {
+            "bg": "#fffaf0",
+            "panel": "#fffdf8",
+            "surface": "#ffffff",
+            "field": "#ffffff",
+            "text": "#2a2417",
+            "muted": "#6f644d",
+            "accent": "#8a6a26",
+            "accent2": "#007f76",
+            "warm": "#ba482f",
+            "button": "#efe6d1",
+            "select": "#f3e8c7",
+            "stroke": "#c9b887",
+            "glass": "#fffdf7",
+        },
+    },
+}
 
 
 class Overlay:
@@ -1940,27 +2289,15 @@ class Overlay:
             save_status_var.set("Saved.")
             self.set_state("captured", "Settings saved.", f"Saved to {config_path()}")
 
-        ttk.Button(button_row, text="Save", command=save).pack(side="left", padx=(0, 8))
-        ttk.Button(button_row, text="Status", command=self.open_status).pack(side="left", padx=(0, 8))
-        ttk.Button(button_row, text="History", command=self.open_history).pack(side="left", padx=(0, 8))
-        ttk.Button(button_row, text="Scratchpad", command=self.open_scratchpad).pack(side="left", padx=(0, 8))
-        ttk.Label(button_row, textvariable=save_status_var).pack(side="left", padx=(4, 0))
-        ttk.Button(button_row, text="Close", command=window.destroy).pack(side="right")
+        ttk.Button(button_row, text="Save", command=save, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Status", command=self.open_status, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="History", command=self.open_history, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(button_row, text="Scratchpad", command=self.open_scratchpad, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Label(button_row, textvariable=save_status_var, style="Flow.Muted.TLabel").pack(side="left", padx=(4, 0))
+        ttk.Button(button_row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
 
     def _settings_theme_options(self) -> list[str]:
-        families = [
-            "Flow",
-            "Ember Glass",
-            "Teal Circuit",
-            "Solar Ribbon",
-            "Crimson Bloom",
-            "Aqua Noir",
-            "Champagne Glass",
-            "Violet Signal",
-            "Graphite Pulse",
-            "Ivory Halo",
-        ]
-        return [f"{family} {mode}" for family in families for mode in ("Dark", "Light")]
+        return [f"{family} {mode}" for family in SETTINGS_THEME_FAMILIES for mode in ("Dark", "Light")]
 
     def _settings_theme_key(self, value: str | None = None) -> str:
         raw = str(value or "").strip()
@@ -1981,56 +2318,15 @@ class Overlay:
 
     def _settings_palette(self, theme: str) -> dict[str, str]:
         theme = self._settings_theme_key(theme)
-        light = theme.endswith("Light")
         family = theme.removesuffix(" Dark").removesuffix(" Light")
-        accents = {
-            "Flow": ("#37e2c0", "#ffca68", "#ff4f73"),
-            "Ember Glass": ("#ff8a52", "#ffe090", "#15d7c0"),
-            "Teal Circuit": ("#23e7ce", "#7cf7d4", "#ffbd6d"),
-            "Solar Ribbon": ("#ffd36f", "#ff674d", "#28dcc3"),
-            "Crimson Bloom": ("#ff466f", "#ffc773", "#31d6c3"),
-            "Aqua Noir": ("#3fe8ff", "#20d4aa", "#ff7060"),
-            "Champagne Glass": ("#e7c989", "#fff0bc", "#16bfa9"),
-            "Violet Signal": ("#b88cff", "#54dfff", "#ffcd73"),
-            "Graphite Pulse": ("#8ea4ff", "#39d7c6", "#ffd067"),
-            "Ivory Halo": ("#d7b56d", "#72d9cb", "#ff8666"),
-        }
-        accent, accent2, warm = accents.get(family, accents["Flow"])
-        if light:
-            return {
-                "name": theme,
-                "mode": "light",
-                "bg": "#eef4f1",
-                "panel": "#f8fbf7",
-                "surface": "#ffffff",
-                "field": "#ffffff",
-                "text": "#142321",
-                "muted": "#5b706c",
-                "accent": accent,
-                "accent2": accent2,
-                "warm": warm,
-                "button": "#dfeae6",
-                "select": "#d3f1e8",
-                "stroke": "#bfd3cc",
-                "glass": "#ffffff",
-            }
-        return {
-            "name": theme,
-            "mode": "dark",
-            "bg": "#061012",
-            "panel": "#0b181b",
-            "surface": "#111f23",
-            "field": "#16272b",
-            "text": "#edf7f3",
-            "muted": "#8fa6a1",
-            "accent": accent,
-            "accent2": accent2,
-            "warm": warm,
-            "button": "#16282d",
-            "select": "#173c39",
-            "stroke": "#244648",
-            "glass": "#091719",
-        }
+        mode = "Light" if theme.endswith("Light") else "Dark"
+        base = SETTINGS_THEME_PALETTES.get(family, SETTINGS_THEME_PALETTES["Flow"]).get(mode)
+        if base is None:
+            base = SETTINGS_THEME_PALETTES["Flow"][mode]
+        palette = dict(base)
+        palette["name"] = theme
+        palette["mode"] = mode.lower()
+        return palette
 
     def _provider_status_text(self, provider_id: str) -> str:
         provider = PROVIDER_BY_ID.get(provider_id, PROVIDER_BY_ID["deepgram"])
@@ -2405,6 +2701,7 @@ class Overlay:
         self._style_settings_widgets(window, palette)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(1, weight=1)
+        theme_text_widgets: list[tk.Text] = []
 
         header = tk.Canvas(window, height=96, bg=palette["bg"], bd=0, highlightthickness=0)
         header.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
@@ -2449,7 +2746,7 @@ class Overlay:
             )
 
         def text_box(parent: ttk.Frame, height: int, *, font: tuple[str, int] = ("Consolas", 10)) -> tk.Text:
-            return tk.Text(
+            widget = tk.Text(
                 parent,
                 height=height,
                 wrap="word",
@@ -2462,6 +2759,8 @@ class Overlay:
                 padx=12,
                 pady=10,
             )
+            theme_text_widgets.append(widget)
+            return widget
 
         deepgram = self.config.setdefault("deepgram", {})
         stt_config = self.config.setdefault("stt", {})
@@ -2573,23 +2872,34 @@ class Overlay:
 
         provider_intro = tk.Canvas(providers_tab, height=86, bg=palette["panel"], bd=0, highlightthickness=0)
         provider_intro.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        provider_intro.create_rectangle(0, 0, 1200, 86, fill=palette["panel"], outline="")
-        provider_intro.create_text(
-            18,
-            22,
-            text="Speech model routing",
-            anchor="w",
-            fill=palette["text"],
-            font=("Segoe UI Semibold", 15),
-        )
-        provider_intro.create_text(
-            18,
-            52,
-            text="Choose a brand, model, and mode. Streaming providers start live; batch providers record locally first, then transcribe after release.",
-            anchor="w",
-            fill=palette["muted"],
-            font=("Segoe UI", 10),
-        )
+
+        def redraw_provider_intro(_event: tk.Event | None = None) -> None:
+            width = max(1, provider_intro.winfo_width())
+            provider_intro.configure(bg=palette["panel"])
+            provider_intro.delete("all")
+            provider_intro.create_rectangle(0, 0, width, 86, fill=palette["panel"], outline="")
+            provider_intro.create_line(0, 84, width, 84, fill=palette["stroke"])
+            provider_intro.create_oval(-34, -62, 126, 98, outline=palette["accent"], width=2)
+            provider_intro.create_oval(width - 164, -58, width + 40, 126, outline=palette["warm"], width=2)
+            provider_intro.create_text(
+                18,
+                22,
+                text="Speech model routing",
+                anchor="w",
+                fill=palette["text"],
+                font=("Segoe UI Semibold", 15),
+            )
+            provider_intro.create_text(
+                18,
+                52,
+                text="Choose a brand, model, and mode. Streaming providers start live; batch providers record locally first, then transcribe after release.",
+                anchor="w",
+                fill=palette["muted"],
+                font=("Segoe UI", 10),
+            )
+
+        provider_intro.bind("<Configure>", redraw_provider_intro)
+        redraw_provider_intro()
 
         stt_provider_box = combo(providers_tab, stt_provider_var, provider_labels(), 30)
         stt_model_box = combo(providers_tab, stt_model_var, model_labels(active_provider_id), 36)
@@ -2642,6 +2952,7 @@ class Overlay:
         add_row(core_tab, 2, "Language", entry(core_tab, language_var, 20))
         add_row(core_tab, 3, "Auto Cleanup", combo(core_tab, level_var, ["none", "light", "medium", "high"], 20))
         theme_box = combo(core_tab, theme_var, self._settings_theme_options(), 28)
+        theme_box.configure(state="readonly")
         add_row(core_tab, 4, "Settings menu theme", theme_box)
         check(core_tab, "Save local transcript history", save_history_var, 5)
         check(core_tab, "Play start and stop sounds", play_sounds_var, 6)
@@ -2833,6 +3144,37 @@ class Overlay:
         button_row = tk.Frame(window, bg=palette["bg"])
         button_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
         save_status_var = tk.StringVar(value="")
+
+        def apply_settings_theme(_event: tk.Event | None = None) -> None:
+            nonlocal theme, palette
+            theme = self._settings_theme_key(theme_var.get())
+            palette = self._settings_palette(theme)
+            if theme_var.get() != theme:
+                theme_var.set(theme)
+            ui["settings_theme"] = theme
+            ui["theme"] = "light" if theme.endswith("Light") else "dark"
+            window.configure(bg=palette["bg"])
+            button_row.configure(bg=palette["bg"])
+            self._style_settings_widgets(window, palette)
+            for widget in theme_text_widgets:
+                try:
+                    widget.configure(
+                        bg=palette["field"],
+                        fg=palette["text"],
+                        insertbackground=palette["text"],
+                        selectbackground=palette["select"],
+                    )
+                except tk.TclError:
+                    pass
+            redraw_header()
+            redraw_provider_intro()
+            callback = self.callbacks.get("save_settings")
+            if callback:
+                callback()
+            save_status_var.set(f"Theme changed to {theme}.")
+
+        theme_box.bind("<<ComboboxSelected>>", apply_settings_theme)
+        theme_box.bind("<FocusOut>", apply_settings_theme, add="+")
 
         def parse_int(var: tk.StringVar, fallback: int, low: int, high: int) -> int:
             try:
