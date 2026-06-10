@@ -6,7 +6,7 @@ from .config import app_dir
 
 
 def configure_logging() -> None:
-    path = app_dir() / "talk-dat-shi.log"
+    path = app_dir() / "talk-dat.log"
     logging.basicConfig(
         filename=str(path),
         level=logging.INFO,

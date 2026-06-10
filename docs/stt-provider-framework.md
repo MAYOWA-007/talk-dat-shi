@@ -1,6 +1,6 @@
-# Talk Dat Shi STT Provider Framework
+# Talk Dat! STT Provider Framework
 
-Talk Dat Shi now separates speech-to-text selection into a provider registry and runtime session adapters.
+Talk Dat! now separates speech-to-text selection into a provider registry and runtime session adapters.
 
 ## Runtime Lanes
 

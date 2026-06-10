@@ -443,7 +443,7 @@ class Overlay:
         self.current_alpha = self.opacity
 
         self.root = tk.Tk()
-        self.root.title("Talk Dat Shi")
+        self.root.title("Talk Dat!")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", self.opacity)
@@ -2198,7 +2198,7 @@ class Overlay:
 
     def _open_settings_legacy(self) -> None:
         self.force_visible()
-        window = self._utility_window("settings", "Talk Dat Shi Settings", "820x680", bg="#f5f6f8")
+        window = self._utility_window("settings", "Talk Dat! Settings", "820x680", bg="#f5f6f8")
         if window is None:
             return
         window.columnconfigure(0, weight=1)
@@ -2547,7 +2547,7 @@ class Overlay:
         height: int,
         theme: str,
         *,
-        title: str = "Talk Dat Shi",
+        title: str = "Talk Dat!",
         subtitle: str | None = None,
     ) -> None:
         width = max(320, int(width))
@@ -2641,7 +2641,7 @@ class Overlay:
         theme_getter: Callable[[], str],
         height: int,
         *,
-        title: str = "Talk Dat Shi",
+        title: str = "Talk Dat!",
         subtitle_getter: Callable[[], str | None] | None = None,
     ) -> None:
         def tick() -> None:
@@ -2668,7 +2668,7 @@ class Overlay:
         ui = self.config.setdefault("ui", {})
         theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
-        window = self._utility_window("onboarding", "Talk Dat Shi Setup", "860x690", bg=palette["bg"])
+        window = self._utility_window("onboarding", "Talk Dat! Setup", "860x690", bg=palette["bg"])
         if window is None:
             return
         window.configure(bg=palette["bg"])
@@ -2687,7 +2687,7 @@ class Overlay:
                 width,
                 136,
                 theme,
-                title="Talk Dat Shi Setup",
+                title="Talk Dat! Setup",
                 subtitle="Choose a speech provider, paste your own key, then trigger only when you want to talk.",
             )
 
@@ -2703,7 +2703,7 @@ class Overlay:
             header,
             lambda: theme,
             136,
-            title="Talk Dat Shi Setup",
+            title="Talk Dat! Setup",
             subtitle_getter=lambda: "Choose a speech provider, paste your own key, then trigger only when you want to talk.",
         )
 
@@ -2880,7 +2880,7 @@ class Overlay:
         ui = self.config.setdefault("ui", {})
         theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
-        window = self._utility_window("settings", "Talk Dat Shi Settings", "1120x760", bg=palette["bg"])
+        window = self._utility_window("settings", "Talk Dat! Settings", "1120x760", bg=palette["bg"])
         if window is None:
             return
         window.configure(bg=palette["bg"])
@@ -3583,7 +3583,7 @@ class Overlay:
 
     def open_status(self) -> None:
         self.force_visible()
-        window = self._utility_window("status", "Talk Dat Shi Status", "620x460", bg="#071113")
+        window = self._utility_window("status", "Talk Dat! Status", "620x460", bg="#071113")
         if window is None:
             return
         self._make_glass_titlebar(window, "Status", "#071113")
@@ -3606,7 +3606,7 @@ class Overlay:
             data = provider() if provider else {}
             if not isinstance(data, dict):
                 data = {}
-            lines = ["Talk Dat Shi status", "=" * 48, ""]
+            lines = ["Talk Dat! status", "=" * 48, ""]
             for key in sorted(data):
                 lines.append(f"{key}: {data[key]}")
             lines.extend(
@@ -3645,7 +3645,7 @@ class Overlay:
 
     def open_history(self) -> None:
         self.force_visible()
-        window = self._utility_window("history", "Talk Dat Shi History", "900x640", bg="#071113")
+        window = self._utility_window("history", "Talk Dat! History", "900x640", bg="#071113")
         if window is None:
             return
         self._make_glass_titlebar(window, "History", "#071113")
@@ -3845,7 +3845,7 @@ class Overlay:
     def open_scratchpad(self) -> None:
         self.force_visible()
         doc = self._load_scratchpad_tabs()
-        window = self._utility_window("scratchpad", "Talk Dat Shi Scratchpad", "980x680", bg="#040b0e")
+        window = self._utility_window("scratchpad", "Talk Dat! Scratchpad", "980x680", bg="#040b0e")
         if window is None:
             return
         self._make_glass_titlebar(window, "Scratchpad", "#040b0e", "#fff2cf")

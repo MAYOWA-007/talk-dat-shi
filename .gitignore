@@ -38,8 +38,8 @@ tmp-*.jpg
 tmp-*.jpeg
 tmp-*.mp4
 tmp-*.wav
-talk-dat-shi-*.png
-talk_dat_shi_chime_*.wav
+talk-dat-*.png
+talk_dat_chime_*.wav
 
 # Editor and OS noise
 .DS_Store

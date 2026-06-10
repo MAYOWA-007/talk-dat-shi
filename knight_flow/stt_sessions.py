@@ -88,7 +88,7 @@ class BatchSTTSession:
             raise ValueError(f"{self.provider_id}_model_missing")
         if self._thread and self._thread.is_alive():
             return
-        self._thread = threading.Thread(target=self._thread_main, name=f"TalkDatShiSTT-{self.provider_id}", daemon=True)
+        self._thread = threading.Thread(target=self._thread_main, name=f"TalkDatSTT-{self.provider_id}", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -207,7 +207,7 @@ class BatchSTTSession:
             if isinstance(value, (str, int, float, bool)) and str(key).strip():
                 fields[str(key)] = str(value).lower() if isinstance(value, bool) else str(value)
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        payload, content_type = multipart_form(fields, {"file": ("talk-dat-shi.wav", wav_bytes, "audio/wav")})
+        payload, content_type = multipart_form(fields, {"file": ("talk-dat.wav", wav_bytes, "audio/wav")})
         raw = http_request(url, method="POST", body=payload, headers={**headers, "Content-Type": content_type})
         if response_format == "text":
             return raw.decode("utf-8", errors="replace").strip()
@@ -226,7 +226,7 @@ class BatchSTTSession:
         for key, value in self.extra.items():
             if isinstance(value, (str, int, float, bool)) and str(key).strip():
                 fields[str(key)] = str(value).lower() if isinstance(value, bool) else str(value)
-        payload, content_type = multipart_form(fields, {"file": ("talk-dat-shi.wav", wav_bytes, "audio/wav")})
+        payload, content_type = multipart_form(fields, {"file": ("talk-dat.wav", wav_bytes, "audio/wav")})
         raw = http_request(
             base + "/v1/speech-to-text",
             method="POST",
@@ -380,7 +380,7 @@ def create_stt_session(
         )
 
     if provider.api_kind == "external":
-        details = provider.notes or "This provider needs a dedicated adapter before it can run inside Talk Dat Shi."
+        details = provider.notes or "This provider needs a dedicated adapter before it can run inside Talk Dat!."
         raise NotImplementedError(f"{provider.label}: {details}")
 
     dg = config.get("deepgram", {})
@@ -410,7 +410,7 @@ def create_stt_session(
 
 
 def multipart_form(fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
-    boundary = f"talkdatshi-{int(time.time() * 1000)}"
+    boundary = f"talkdat-{int(time.time() * 1000)}"
     parts: list[bytes] = []
     for key, value in fields.items():
         parts.append(f"--{boundary}\r\n".encode("ascii"))

@@ -2,20 +2,20 @@
 
 ## Download From GitHub
 
-1. Open the [GitHub Releases page](https://github.com/MAYOWA-007/talk-dat-shi/releases).
+1. Open the [GitHub Releases page](https://github.com/MAYOWA-007/talk-dat/releases).
 2. Download one Windows asset:
-   - Recommended: `Talk-Dat-Shi-Setup.exe`
-   - Portable/no installer: `Talk-Dat-Shi-Windows-Portable.zip`
+   - Recommended: `Talk-Dat-Setup.exe`
+   - Portable/no installer: `Talk-Dat-Windows-Portable.zip`
 3. Verify the checksum in `SHA256SUMS.txt` if you want an integrity check.
 
 The release assets do not contain API keys, dictionaries, snippets, private config, or transcript history.
 
 ## Recommended: Windows Installer
 
-1. Download `Talk-Dat-Shi-Setup.exe` from a release.
+1. Download `Talk-Dat-Setup.exe` from a release.
 2. Run the custom glass installer.
 3. Keep the default install location unless you have a reason to move it.
-4. Leave "Start with Windows" off unless you want Talk Dat Shi to launch when Windows signs in.
+4. Leave "Start with Windows" off unless you want Talk Dat! to launch when Windows signs in.
 5. Click Install. Leave "Launch after install" enabled for the fastest first run.
 6. Complete onboarding with your own provider key and model.
 
@@ -23,20 +23,20 @@ The installer does not contain API keys. It installs the app executable, local h
 
 ## Updates
 
-The installed app records its current version in local config. Use Settings > Core, Status, or the tray menu to check the latest public GitHub Release. When a newer version exists, Talk Dat Shi downloads the official `Talk-Dat-Shi-Setup.exe` to:
+The installed app records its current version in local config. Use Settings > Core, Status, or the tray menu to check the latest public GitHub Release. When a newer version exists, Talk Dat! downloads the official `Talk-Dat-Setup.exe` to:
 
 ```text
-%APPDATA%\TalkDatShi\updates
+%APPDATA%\TalkDat\updates
 ```
 
 Then it launches the installer so the same custom glass install flow updates the app. Startup update checks are on by default; automatic installer download can be enabled in Settings > Core.
 
 ## Portable EXE
 
-1. Download `Talk-Dat-Shi-Windows-Portable.zip`.
-2. Extract it somewhere you trust, such as `%LOCALAPPDATA%\Programs\Talk Dat Shi`.
+1. Download `Talk-Dat-Windows-Portable.zip`.
+2. Extract it somewhere you trust, such as `%LOCALAPPDATA%\Programs\Talk Dat!`.
 3. Open `START-HERE.md`.
-4. Run `Talk Dat Shi.exe`.
+4. Run `Talk Dat!.exe`.
 5. Complete onboarding.
 
 Optional startup registration from source:
@@ -54,8 +54,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-startup.ps1
 ## From Source
 
 ```powershell
-git clone https://github.com/MAYOWA-007/talk-dat-shi.git
-cd talk-dat-shi
+git clone https://github.com/MAYOWA-007/talk-dat.git
+cd talk-dat
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
@@ -83,7 +83,7 @@ The installer builder uses PyInstaller and does not require Inno Setup.
 
 ## First-Run Onboarding
 
-On a fresh config, Talk Dat Shi opens a setup window where the user chooses:
+On a fresh config, Talk Dat! opens a setup window where the user chooses:
 
 - Provider
 - Model
@@ -92,7 +92,7 @@ On a fresh config, Talk Dat Shi opens a setup window where the user chooses:
 - API base
 - API key
 
-The setup window also reminds users that the microphone stays off until a trigger is pressed. The key is saved locally in `%APPDATA%\TalkDatShi\config.json`.
+The setup window also reminds users that the microphone stays off until a trigger is pressed. The key is saved locally in `%APPDATA%\TalkDat\config.json`.
 
 Recommended first test:
 
@@ -104,12 +104,12 @@ Recommended first test:
 
 ## Uninstall
 
-If installed through the setup EXE, uninstall from Windows Apps or run `Talk Dat Shi Uninstaller.exe` from the install folder. The custom uninstaller removes installed app files, shortcuts, startup entry, and Windows registration.
+If installed through the setup EXE, uninstall from Windows Apps or run `Talk Dat! Uninstaller.exe` from the install folder. The custom uninstaller removes installed app files, shortcuts, startup entry, and Windows registration.
 
 Private local user data is kept by default. Select the uninstaller option to remove it only when you truly want to delete:
 
 ```text
-%APPDATA%\TalkDatShi
+%APPDATA%\TalkDat
 ```
 
 Deleting that folder removes local config and transcript history.

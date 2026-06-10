@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Talk Dat Shi.
+Thanks for helping improve Talk Dat!.
 
 ## Ground Rules
 

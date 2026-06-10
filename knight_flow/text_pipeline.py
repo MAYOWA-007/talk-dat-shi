@@ -201,7 +201,7 @@ def protect_urls(text: str) -> tuple[str, dict[str, str]]:
     protected: dict[str, str] = {}
 
     def repl(match: re.Match[str]) -> str:
-        token = f"__TALK_DAT_SHI_URL_{len(protected)}__"
+        token = f"__TALK_DAT_URL_{len(protected)}__"
         protected[token] = match.group(0)
         return token
 

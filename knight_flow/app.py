@@ -33,7 +33,7 @@ from .windows_audio import OutputMuteGuard
 log = logging.getLogger(__name__)
 
 
-class TalkDatShiApp:
+class TalkDatApp:
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = project_root or Path(__file__).resolve().parents[1]
         self.config = load_config(self.project_root)
@@ -86,7 +86,7 @@ class TalkDatShiApp:
         )
 
     def run(self) -> None:
-        log.info("Talk Dat Shi starting")
+        log.info("Talk Dat! starting")
         provider_id = selected_provider_id(self.config)
         log.info(
             "Config loaded: stt_provider=%s model=%s cleanup=%s",
@@ -488,7 +488,7 @@ class TalkDatShiApp:
                 updates["latest_release_url"] = info.release_url
                 save_config(self.config)
                 if not info.available:
-                    finish(f"Talk Dat Shi is up to date. v{APP_VERSION}")
+                    finish(f"Talk Dat! is up to date. v{APP_VERSION}")
                     return
                 if not install:
                     finish(
@@ -543,7 +543,7 @@ class TalkDatShiApp:
                 with self.update_lock:
                     self.update_in_progress = False
 
-        threading.Thread(target=worker, name="TalkDatShiUpdater", daemon=True).start()
+        threading.Thread(target=worker, name="TalkDatUpdater", daemon=True).start()
 
     def show_overlay(self) -> None:
         self.overlay.show()
@@ -613,7 +613,7 @@ class TalkDatShiApp:
             path.parent.mkdir(parents=True, exist_ok=True)
             status = "final-ish" if is_final else "interim"
             path.write_text(
-                f"Talk Dat Shi live draft\n"
+                f"Talk Dat! live draft\n"
                 f"Updated: {timestamp()}\n"
                 f"Mode: {mode}\n"
                 f"Status: {status}\n\n"
@@ -702,7 +702,7 @@ class TalkDatShiApp:
             return token is self.session_token
 
     def quit(self) -> None:
-        log.info("Talk Dat Shi quitting")
+        log.info("Talk Dat! quitting")
         with self.lock:
             session = self.session
             self.session = None
@@ -731,5 +731,5 @@ def main() -> None:
     if already_running():
         show_already_running_message()
         return
-    app = TalkDatShiApp()
+    app = TalkDatApp()
     app.run()

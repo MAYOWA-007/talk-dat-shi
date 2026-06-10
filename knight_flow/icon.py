@@ -215,8 +215,8 @@ def _draw_icon(size: int) -> Any:
 
 
 def ensure_icon_file() -> Path:
-    path = app_dir() / "talk-dat-shi.ico"
-    version_path = app_dir() / "talk-dat-shi-icon.version"
+    path = app_dir() / "talk-dat.ico"
+    version_path = app_dir() / "talk-dat-icon.version"
     if path.exists():
         try:
             if version_path.read_text(encoding="utf-8").strip() == ICON_VERSION:
@@ -235,8 +235,8 @@ def ensure_icon_file() -> Path:
 
 
 def ensure_tray_png_file() -> Path:
-    path = app_dir() / "talk-dat-shi-tray.png"
-    version_path = app_dir() / "talk-dat-shi-tray.version"
+    path = app_dir() / "talk-dat-tray.png"
+    version_path = app_dir() / "talk-dat-tray.version"
     if path.exists():
         try:
             if version_path.read_text(encoding="utf-8").strip() == ICON_VERSION:

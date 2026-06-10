@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ExePath = Join-Path $Root "dist\Talk Dat Shi.exe"
+$ExePath = Join-Path $Root "dist\Talk Dat!.exe"
 $RunScript = Join-Path $Root "run.ps1"
 $PowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 
@@ -15,4 +15,4 @@ if (Test-Path $ExePath) {
         -WindowStyle Hidden
 }
 
-Write-Output "Talk Dat Shi launched."
+Write-Output "Talk Dat! launched."

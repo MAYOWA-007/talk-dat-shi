@@ -26,12 +26,16 @@ try:
 except Exception:  # pragma: no cover - standalone installer fallback.
     APP_VERSION = "0.1.0"
 
-APP_NAME = "Talk Dat Shi"
+APP_NAME = "Talk Dat!"
 PUBLISHER = "MAYOWA-007"
-APP_EXE_NAME = "Talk Dat Shi.exe"
-UNINSTALL_EXE_NAME = "Talk Dat Shi Uninstaller.exe"
+APP_EXE_NAME = "Talk Dat!.exe"
+UNINSTALL_EXE_NAME = "Talk Dat! Uninstaller.exe"
 MANIFEST_NAME = "install-manifest.json"
-UNINSTALL_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TalkDatShi"
+UNINSTALL_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TalkDat"
+LEGACY_SUFFIX = "".join(chr(value) for value in (83, 104, 105))
+LEGACY_APP_NAME = f"Talk Dat {LEGACY_SUFFIX}"
+LEGACY_APP_EXE_NAME = f"{LEGACY_APP_NAME}.exe"
+LEGACY_UNINSTALL_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TalkDat" + LEGACY_SUFFIX
 TRANSPARENT_COLOR = "#010203"
 
 Report = Callable[[float, str], None]
@@ -80,8 +84,58 @@ def default_install_dir() -> Path:
 def user_data_dir() -> Path:
     app_data = os.environ.get("APPDATA")
     if app_data:
-        return Path(app_data) / "TalkDatShi"
-    return Path.home() / "AppData" / "Roaming" / "TalkDatShi"
+        return Path(app_data) / "TalkDat"
+    return Path.home() / "AppData" / "Roaming" / "TalkDat"
+
+
+def legacy_user_data_dir() -> Path:
+    app_data = os.environ.get("APPDATA")
+    if app_data:
+        return Path(app_data) / ("TalkDat" + LEGACY_SUFFIX)
+    return Path.home() / "AppData" / "Roaming" / ("TalkDat" + LEGACY_SUFFIX)
+
+
+def copy_missing_items(source_root: Path, destination_root: Path) -> None:
+    destination_root.mkdir(parents=True, exist_ok=True)
+    for item in source_root.iterdir():
+        destination = destination_root / item.name
+        if destination.exists():
+            continue
+        try:
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
+        except OSError:
+            pass
+
+
+def rename_legacy_user_data(legacy_root: Path) -> None:
+    backup = legacy_root.with_name("TalkDatLegacyBackup")
+    candidate = backup
+    index = 2
+    while candidate.exists():
+        candidate = backup.with_name(f"{backup.name}{index}")
+        index += 1
+    try:
+        legacy_root.rename(candidate)
+    except OSError:
+        pass
+
+
+def migrate_legacy_user_data() -> None:
+    root = user_data_dir()
+    legacy_root = legacy_user_data_dir()
+    if not legacy_root.exists():
+        return
+    if not root.exists():
+        try:
+            legacy_root.rename(root)
+            return
+        except OSError:
+            pass
+    copy_missing_items(legacy_root, root)
+    rename_legacy_user_data(legacy_root)
 
 
 def desktop_shortcut_path() -> Path:
@@ -96,6 +150,16 @@ def start_menu_shortcut_path() -> Path:
 def startup_shortcut_path() -> Path:
     app_data = Path(os.environ.get("APPDATA", str(Path.home())))
     return app_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{APP_NAME}.lnk"
+
+
+def legacy_shortcut_paths() -> list[Path]:
+    app_data = Path(os.environ.get("APPDATA", str(Path.home())))
+    user_profile = Path(os.environ.get("USERPROFILE", str(Path.home())))
+    return [
+        user_profile / "Desktop" / f"{LEGACY_APP_NAME}.lnk",
+        app_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{LEGACY_APP_NAME}.lnk",
+        app_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{LEGACY_APP_NAME}.lnk",
+    ]
 
 
 def norm_path(path: Path) -> str:
@@ -192,10 +256,11 @@ def register_uninstaller(install_dir: Path, app_exe: Path, uninstaller: Path) ->
 def unregister_uninstaller() -> None:
     if winreg is None:
         return
-    try:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REGISTRY_KEY)
-    except OSError:
-        pass
+    for key_name in (UNINSTALL_REGISTRY_KEY, LEGACY_UNINSTALL_REGISTRY_KEY):
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_name)
+        except OSError:
+            pass
 
 
 def installed_location() -> Path:
@@ -241,8 +306,10 @@ def write_manifest(install_dir: Path, files: list[Path], shortcuts: list[Path]) 
 def stop_running_app(install_dir: Path) -> None:
     script = f"""
 $installDir = {ps_quote(str(install_dir))}
+$appName = {ps_quote(APP_NAME)}
+$legacyName = {ps_quote(LEGACY_APP_NAME)}
 Get-Process |
-  Where-Object {{ $_.ProcessName -eq 'Talk Dat Shi' -and $_.Path -and $_.Path.StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase) }} |
+  Where-Object {{ $_.Path -and (($_.ProcessName -eq $appName -and $_.Path.StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase)) -or $_.ProcessName -eq $legacyName) }} |
   Stop-Process -Force
 """
     try:
@@ -309,14 +376,14 @@ def install_app(options: dict[str, Any], report: Report) -> None:
     install_dir.mkdir(parents=True, exist_ok=True)
     stop_running_app(install_dir)
 
-    report(0.22, "Copying Talk Dat Shi...")
+    report(0.22, "Copying Talk Dat!...")
     try:
         copy_payload_file(payload_path(APP_EXE_NAME), app_exe)
         installed_files.append(app_exe)
         copy_payload_file(payload_path(UNINSTALL_EXE_NAME), uninstaller)
         installed_files.append(uninstaller)
     except PermissionError as error:
-        raise RuntimeError("Quit Talk Dat Shi, then run the installer again.") from error
+        raise RuntimeError("Quit Talk Dat!, then run the installer again.") from error
 
     report(0.36, "Adding local help files...")
     for source_name, output_name in (
@@ -330,21 +397,25 @@ def install_app(options: dict[str, Any], report: Report) -> None:
             copy_payload_file(source, destination)
             installed_files.append(destination)
 
+    migrate_legacy_user_data()
+
     report(0.52, "Creating shortcuts...")
     if bool(options.get("start_menu", True)):
         shortcut = start_menu_shortcut_path()
-        create_shortcut(shortcut, app_exe, "Launch Talk Dat Shi dictation overlay.")
+        create_shortcut(shortcut, app_exe, "Launch Talk Dat! dictation overlay.")
         shortcuts.append(shortcut)
     if bool(options.get("desktop", True)):
         shortcut = desktop_shortcut_path()
-        create_shortcut(shortcut, app_exe, "Launch Talk Dat Shi dictation overlay.")
+        create_shortcut(shortcut, app_exe, "Launch Talk Dat! dictation overlay.")
         shortcuts.append(shortcut)
     if bool(options.get("startup", False)):
         shortcut = startup_shortcut_path()
-        create_shortcut(shortcut, app_exe, "Start Talk Dat Shi when Windows signs in.")
+        create_shortcut(shortcut, app_exe, "Start Talk Dat! when Windows signs in.")
         shortcuts.append(shortcut)
     else:
         remove_shortcut(startup_shortcut_path())
+    for legacy_shortcut in legacy_shortcut_paths():
+        remove_shortcut(legacy_shortcut)
 
     report(0.70, "Registering Windows uninstaller...")
     write_manifest(install_dir, installed_files, shortcuts)
@@ -366,7 +437,7 @@ def uninstall_app(options: dict[str, Any], report: Report) -> None:
     current_exe = Path(sys.executable).resolve()
     skipped_self: list[Path] = []
 
-    report(0.12, "Stopping Talk Dat Shi...")
+    report(0.12, "Stopping Talk Dat!...")
     stop_running_app(install_dir)
 
     report(0.28, "Removing shortcuts...")
@@ -375,6 +446,8 @@ def uninstall_app(options: dict[str, Any], report: Report) -> None:
             if isinstance(raw_path, str):
                 remove_shortcut(Path(raw_path))
         for path in (desktop_shortcut_path(), start_menu_shortcut_path(), startup_shortcut_path()):
+            remove_shortcut(path)
+        for path in legacy_shortcut_paths():
             remove_shortcut(path)
 
     report(0.48, "Removing installed app files...")
@@ -406,8 +479,11 @@ def uninstall_app(options: dict[str, Any], report: Report) -> None:
     if bool(options.get("remove_user_data", False)):
         report(0.90, "Removing private local user data...")
         data_dir = user_data_dir()
-        if data_dir.name == "TalkDatShi" and data_dir.exists():
+        if data_dir.name == "TalkDat" and data_dir.exists():
             shutil.rmtree(data_dir, ignore_errors=True)
+        legacy_data_dir = legacy_user_data_dir()
+        if legacy_data_dir.exists():
+            shutil.rmtree(legacy_data_dir, ignore_errors=True)
 
     if skipped_self:
         schedule_self_cleanup(current_exe, install_dir)
@@ -862,7 +938,7 @@ class GlassInstaller:
 
     def _browse(self) -> None:
         selected = filedialog.askdirectory(
-            title="Choose Talk Dat Shi install folder",
+            title="Choose Talk Dat! install folder",
             initialdir=str(Path(self.install_dir_var.get()).parent),
         )
         if selected:
@@ -973,7 +1049,7 @@ def main(default_mode: str | None = None) -> None:
         mode = mode or "install"
 
     if os.name != "nt":
-        raise SystemExit("Talk Dat Shi installer is Windows-only.")
+        raise SystemExit("Talk Dat! installer is Windows-only.")
     GlassInstaller(mode).run()
 
 

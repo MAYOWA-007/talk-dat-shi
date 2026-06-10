@@ -3,11 +3,13 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 
-APP_NAME = "TalkDatShi"
+APP_NAME = "TalkDat"
+LEGACY_APP_NAME = APP_NAME + "".join(chr(value) for value in (83, 104, 105))
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -155,12 +157,56 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+def _copy_missing_items(source_root: Path, destination_root: Path) -> None:
+    destination_root.mkdir(parents=True, exist_ok=True)
+    for item in source_root.iterdir():
+        destination = destination_root / item.name
+        if destination.exists():
+            continue
+        try:
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
+        except OSError:
+            pass
+
+
+def _rename_legacy_root(legacy_root: Path) -> None:
+    backup = legacy_root.with_name(f"{APP_NAME}LegacyBackup")
+    candidate = backup
+    index = 2
+    while candidate.exists():
+        candidate = backup.with_name(f"{backup.name}{index}")
+        index += 1
+    try:
+        legacy_root.rename(candidate)
+    except OSError:
+        pass
+
+
+def _migrate_legacy_app_dir(app_data: Path, root: Path) -> None:
+    legacy_root = app_data / LEGACY_APP_NAME
+    if not legacy_root.exists():
+        return
+    if not root.exists():
+        try:
+            legacy_root.rename(root)
+            return
+        except OSError:
+            pass
+    _copy_missing_items(legacy_root, root)
+    _rename_legacy_root(legacy_root)
+
+
 def app_dir() -> Path:
-    override = os.environ.get("TALK_DAT_SHI_HOME")
+    override = os.environ.get("TALK_DAT_HOME")
     if override:
         root = Path(override).expanduser()
     else:
-        root = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+        app_data = Path(os.environ.get("APPDATA", Path.home()))
+        root = app_data / APP_NAME
+        _migrate_legacy_app_dir(app_data, root)
     root.mkdir(parents=True, exist_ok=True)
     return root
 

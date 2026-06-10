@@ -1,9 +1,9 @@
-# Start Here: Talk Dat Shi for Windows
+# Start Here: Talk Dat! for Windows
 
 ## Fast Path
 
-1. If you downloaded the setup EXE, run `Talk-Dat-Shi-Setup.exe` and leave "Launch after install" enabled.
-2. If you downloaded the portable ZIP, run `Talk Dat Shi.exe`.
+1. If you downloaded the setup EXE, run `Talk-Dat-Setup.exe` and leave "Launch after install" enabled.
+2. If you downloaded the portable ZIP, run `Talk Dat!.exe`.
 3. In setup, choose a wired provider such as Deepgram, OpenAI, ElevenLabs, AssemblyAI, or Gemini.
 4. Paste your own provider API key.
 5. Save setup.
@@ -28,12 +28,12 @@ This download does not include API keys or private user data.
 Your keys, provider options, dictionary, snippets, transcript history, live draft, and scratchpad tabs are saved locally under:
 
 ```text
-%APPDATA%\TalkDatShi
+%APPDATA%\TalkDat
 ```
 
 The microphone does not open until you trigger dictation.
 When speaker-output muting is enabled, only Windows playback is muted; microphone input remains available for dictation.
-Update installers are downloaded only from the public GitHub Releases page and saved under `%APPDATA%\TalkDatShi\updates`.
+Update installers are downloaded only from the public GitHub Releases page and saved under `%APPDATA%\TalkDat\updates`.
 
 ## Troubleshooting
 

@@ -13,7 +13,7 @@ def already_running() -> bool:
     if sys.platform != "win32":
         return False
     kernel32 = ctypes.windll.kernel32
-    _mutex_handle = kernel32.CreateMutexW(None, False, "Local\\TalkDatShiSingleInstance")
+    _mutex_handle = kernel32.CreateMutexW(None, False, "Local\\TalkDatSingleInstance")
     return kernel32.GetLastError() == 183
 
 
@@ -23,8 +23,8 @@ def show_already_running_message() -> None:
     try:
         ctypes.windll.user32.MessageBoxW(
             None,
-            "Talk Dat Shi is already running. Check the bottom overlay or the system tray icon.",
-            "Talk Dat Shi",
+            "Talk Dat! is already running. Check the bottom overlay or the system tray icon.",
+            "Talk Dat!",
             0x40,
         )
     except Exception:

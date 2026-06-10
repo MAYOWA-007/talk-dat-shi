@@ -151,7 +151,7 @@ def _done_chime(path: Path) -> Path:
 
 
 def ensure_chime(kind: str) -> Path | None:
-    path = app_dir() / f"talk_dat_shi_chime_{kind}_v{CHIME_VERSION}.wav"
+    path = app_dir() / f"talk_dat_chime_{kind}_v{CHIME_VERSION}.wav"
     if path.exists():
         return path
     if kind == "on":
@@ -176,4 +176,4 @@ def play_chime(kind: str, *, enabled: bool = True) -> None:
         except Exception:
             return
 
-    threading.Thread(target=worker, name="TalkDatShiChime", daemon=True).start()
+    threading.Thread(target=worker, name="TalkDatChime", daemon=True).start()

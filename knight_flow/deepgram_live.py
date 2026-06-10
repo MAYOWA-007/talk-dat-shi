@@ -107,7 +107,7 @@ class DeepgramLiveSession:
             raise ValueError("deepgram_api_key_missing")
         if self._thread and self._thread.is_alive():
             return
-        self._thread = threading.Thread(target=self._thread_main, name="TalkDatShiDeepgram", daemon=True)
+        self._thread = threading.Thread(target=self._thread_main, name="TalkDatDeepgram", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:

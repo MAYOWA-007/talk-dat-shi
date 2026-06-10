@@ -1,12 +1,12 @@
-# Talk Dat Shi
+# Talk Dat!
 
-Talk Dat Shi is a Windows-first local dictation overlay. It stays as a small always-on-top animated pill, records only when you trigger it, sends audio to the speech-to-text provider you configure, cleans up the result, and pastes it into the active app.
+Talk Dat! is a Windows-first local dictation overlay. It stays as a small always-on-top animated pill, records only when you trigger it, sends audio to the speech-to-text provider you configure, cleans up the result, and pastes it into the active app.
 
 The visual system has two core pieces: **Talk Stone**, the matte black roman-clay app mark, and **The Pill**, the animated Flow dictation overlay.
 
 This is a bring-your-own-key project. The repository does not include API keys, private config, transcript history, or built binaries.
 
-> Talk Dat Shi is an independent project and is not affiliated with Wispr, Wispr Flow, Deepgram, OpenAI, ElevenLabs, AssemblyAI, Google, or any other provider.
+> Talk Dat! is an independent project and is not affiliated with Wispr, Wispr Flow, Deepgram, OpenAI, ElevenLabs, AssemblyAI, Google, or any other provider.
 
 ## Features
 
@@ -29,20 +29,20 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 
 ## Install
 
-Go to [Releases](https://github.com/MAYOWA-007/talk-dat-shi/releases) and download one Windows asset:
+Go to [Releases](https://github.com/MAYOWA-007/talk-dat/releases) and download one Windows asset:
 
-- Recommended: `Talk-Dat-Shi-Setup.exe`
-- Portable/no installer: `Talk-Dat-Shi-Windows-Portable.zip`
+- Recommended: `Talk-Dat-Setup.exe`
+- Portable/no installer: `Talk-Dat-Windows-Portable.zip`
 
-Launch Talk Dat Shi, complete setup with your own provider key, then test in Notepad. The microphone stays off until you click the pill or press a trigger.
+Launch Talk Dat!, complete setup with your own provider key, then test in Notepad. The microphone stays off until you click the pill or press a trigger.
 
-The setup EXE uses a custom glass installer. It installs per-user under `%LOCALAPPDATA%\Programs\Talk Dat Shi`, creates Start/Desktop shortcuts, optionally starts with Windows, registers a matching glass uninstaller in Windows Apps, and never includes API keys or private user data.
+The setup EXE uses a custom glass installer. It installs per-user under `%LOCALAPPDATA%\Programs\Talk Dat!`, creates Start/Desktop shortcuts, optionally starts with Windows, registers a matching glass uninstaller in Windows Apps, and never includes API keys or private user data.
 
 The portable ZIP includes `START-HERE.md`, `INSTALL.md`, and `PROVIDERS.md`.
 
 ## Updates
 
-Talk Dat Shi tracks its installed app version locally and checks the public GitHub Releases feed when update checks are enabled. Settings > Core and the tray menu can check for the latest release, download `Talk-Dat-Shi-Setup.exe` into `%APPDATA%\TalkDatShi\updates`, and launch the installer.
+Talk Dat! tracks its installed app version locally and checks the public GitHub Releases feed when update checks are enabled. Settings > Core and the tray menu can check for the latest release, download `Talk-Dat-Setup.exe` into `%APPDATA%\TalkDat\updates`, and launch the installer.
 
 Automatic startup checks are enabled by default. Automatic installer download is available as a setting, but it is off by default so users choose when to run a new installer.
 
@@ -56,15 +56,15 @@ Requirements:
 - Your own speech-to-text provider key
 
 ```powershell
-git clone https://github.com/MAYOWA-007/talk-dat-shi.git
-cd talk-dat-shi
+git clone https://github.com/MAYOWA-007/talk-dat.git
+cd talk-dat
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
 The app saves local user config here:
 
 ```text
-%APPDATA%\TalkDatShi\config.json
+%APPDATA%\TalkDat\config.json
 ```
 
 ## Build
@@ -87,7 +87,7 @@ Build the custom glass Windows installer:
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1
 ```
 
-The installer output is written to `release\Talk-Dat-Shi-Setup.exe`. The compatibility command above delegates to `build-custom-installer.ps1`.
+The installer output is written to `release\Talk-Dat-Setup.exe`. The compatibility command above delegates to `build-custom-installer.ps1`.
 
 ## Provider Support
 
@@ -118,20 +118,20 @@ When you are ready to create the public repository, follow [docs/GITHUB_PUBLISH.
 
 ## Privacy
 
-Talk Dat Shi does not run a server. Audio is captured locally only after a trigger, then sent to the selected STT provider for transcription. Transcript history is local and can be disabled in Settings.
+Talk Dat! does not run a server. Audio is captured locally only after a trigger, then sent to the selected STT provider for transcription. Transcript history is local and can be disabled in Settings.
 
-User API keys, dictionaries, snippets, provider advanced options, transcript history, and scratchpad content live under `%APPDATA%\TalkDatShi`. They are not part of the public GitHub repository or default download.
+User API keys, dictionaries, snippets, provider advanced options, transcript history, and scratchpad content live under `%APPDATA%\TalkDat`. They are not part of the public GitHub repository or default download.
 
-Uninstall keeps `%APPDATA%\TalkDatShi` by default. The custom uninstaller offers a separate option to remove that private local data.
+Uninstall keeps `%APPDATA%\TalkDat` by default. The custom uninstaller offers a separate option to remove that private local data.
 
 Local files:
 
 ```text
-%APPDATA%\TalkDatShi\config.json
-%APPDATA%\TalkDatShi\history.jsonl
-%APPDATA%\TalkDatShi\full-transcript-history.txt
-%APPDATA%\TalkDatShi\live-transcript-draft.txt
-%APPDATA%\TalkDatShi\scratchpad-tabs.json
+%APPDATA%\TalkDat\config.json
+%APPDATA%\TalkDat\history.jsonl
+%APPDATA%\TalkDat\full-transcript-history.txt
+%APPDATA%\TalkDat\live-transcript-draft.txt
+%APPDATA%\TalkDat\scratchpad-tabs.json
 ```
 
 Do not commit these files.

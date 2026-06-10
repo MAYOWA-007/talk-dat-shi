@@ -10,11 +10,11 @@ A GitHub repository has one owner: a user account or an organization. If persona
 
 - API keys or tokens
 - `.env`
-- `%APPDATA%\TalkDatShi\config.json`
-- `%APPDATA%\TalkDatShi\history.jsonl`
-- `%APPDATA%\TalkDatShi\full-transcript-history.txt`
-- `%APPDATA%\TalkDatShi\live-transcript-draft.txt`
-- `%APPDATA%\TalkDatShi\scratchpad-tabs.json`
+- `%APPDATA%\TalkDat\config.json`
+- `%APPDATA%\TalkDat\history.jsonl`
+- `%APPDATA%\TalkDat\full-transcript-history.txt`
+- `%APPDATA%\TalkDat\live-transcript-draft.txt`
+- `%APPDATA%\TalkDat\scratchpad-tabs.json`
 - `build/`
 - `dist/`
 - `release/`
@@ -57,15 +57,15 @@ git push origin v0.1.0
 
 5. Confirm GitHub Actions ran `Build Windows Release`.
 6. Confirm the GitHub Release has:
-   - `Talk-Dat-Shi-Setup.exe` custom glass installer
-   - `Talk-Dat-Shi-Windows-Portable.zip`
+   - `Talk-Dat-Setup.exe` custom glass installer
+   - `Talk-Dat-Windows-Portable.zip`
    - `SHA256SUMS.txt`
 7. Download the release from GitHub on a clean machine or temp folder.
 8. Run the installer and confirm it creates Start/Desktop shortcuts, optional startup remains off unless selected, and Windows Apps shows the uninstaller.
 9. Confirm onboarding appears on a fresh config with no API key.
 10. Confirm Status shows the app idle and `session_active: False`.
 11. Confirm dictation only starts after a trigger or pill click.
-12. Run the custom uninstaller and confirm `%APPDATA%\TalkDatShi` is kept unless the private-data removal option is selected.
+12. Run the custom uninstaller and confirm `%APPDATA%\TalkDat` is kept unless the private-data removal option is selected.
 
 ### Local Release Build
 
@@ -86,11 +86,11 @@ powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1
 5. Confirm Status shows the app idle and `session_active: False`.
 6. Confirm onboarding appears on a fresh config with no API key.
 7. Create a portable ZIP containing:
-   - `dist\Talk Dat Shi.exe`
+   - `dist\Talk Dat!.exe`
    - `docs\START_HERE_WINDOWS.md`
    - `docs\INSTALL.md`
    - `docs\PROVIDERS.md`
-8. Attach `release\Talk-Dat-Shi-Setup.exe`, the portable ZIP, and `SHA256SUMS.txt` to the GitHub release.
+8. Attach `release\Talk-Dat-Setup.exe`, the portable ZIP, and `SHA256SUMS.txt` to the GitHub release.
 9. Include first-run, privacy, and checksum notes in the release notes.
 
 ## Safety Notes

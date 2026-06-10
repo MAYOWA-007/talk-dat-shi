@@ -19,7 +19,7 @@ class TrayController:
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
             return
-        self.thread = threading.Thread(target=self._run, name="TalkDatShiTray", daemon=True)
+        self.thread = threading.Thread(target=self._run, name="TalkDatTray", daemon=True)
         self.thread.start()
 
     def stop(self) -> None:
@@ -49,7 +49,7 @@ class TrayController:
                 pystray.MenuItem("Panic stop", lambda _icon, _item: self._call("panic")),
                 pystray.MenuItem("Quit", lambda _icon, _item: self._call("quit")),
             )
-            self.icon = pystray.Icon("Talk Dat Shi", make_tray_image(), "Talk Dat Shi", menu)
+            self.icon = pystray.Icon("Talk Dat!", make_tray_image(), "Talk Dat!", menu)
             self.icon.run()
         except Exception:
             return

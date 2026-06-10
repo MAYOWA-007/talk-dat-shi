@@ -54,7 +54,7 @@ def _request(url: str, timeout: float) -> urllib.request.Request:
         url,
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": f"TalkDatShi/{APP_VERSION}",
+            "User-Agent": f"TalkDat/{APP_VERSION}",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
@@ -65,7 +65,7 @@ def _download_request(url: str) -> urllib.request.Request:
         url,
         headers={
             "Accept": "application/octet-stream",
-            "User-Agent": f"TalkDatShi/{APP_VERSION}",
+            "User-Agent": f"TalkDat/{APP_VERSION}",
         },
     )
 
@@ -130,7 +130,7 @@ def download_installer(info: UpdateInfo, progress: ProgressCallback | None = Non
     if not info.installer_url:
         raise UpdateError("The latest release does not include the Windows setup EXE yet.")
     safe_version = re.sub(r"[^0-9A-Za-z._-]+", "-", info.latest_version).strip("-") or "latest"
-    destination = updates_dir() / f"Talk-Dat-Shi-Setup-{safe_version}.exe"
+    destination = updates_dir() / f"Talk-Dat-Setup-{safe_version}.exe"
     temp_destination = destination.with_suffix(".part")
     try:
         with urllib.request.urlopen(_download_request(info.installer_url), timeout=timeout) as response:

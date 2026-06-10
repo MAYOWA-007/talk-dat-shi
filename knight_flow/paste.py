@@ -58,7 +58,7 @@ def should_prefix_space(text: str) -> bool:
 
 
 def left_context_char(previous_clipboard: str, timeout: float = 0.08) -> str:
-    sentinel = f"__TALK_DAT_SHI_CONTEXT_{uuid.uuid4().hex}__"
+    sentinel = f"__TALK_DAT_CONTEXT_{uuid.uuid4().hex}__"
     try:
         copy_text(sentinel)
         pyautogui.hotkey("shift", "left")
@@ -117,7 +117,7 @@ def paste_text(
 
 def copy_selected_text(timeout: float = 0.18) -> tuple[str, str]:
     previous = clipboard_text()
-    sentinel = f"__TALK_DAT_SHI_NO_SELECTION_{uuid.uuid4().hex}__"
+    sentinel = f"__TALK_DAT_NO_SELECTION_{uuid.uuid4().hex}__"
     copy_text(sentinel)
     pyautogui.hotkey("ctrl", "c")
     time.sleep(timeout)

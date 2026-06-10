@@ -6,11 +6,11 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
-$AppExe = Join-Path $Root "dist\Talk Dat Shi.exe"
-$UninstallerExe = Join-Path $Root "dist\Talk Dat Shi Uninstaller.exe"
-$InstallerExe = Join-Path $Root "dist\Talk Dat Shi Installer.exe"
+$AppExe = Join-Path $Root "dist\Talk Dat!.exe"
+$UninstallerExe = Join-Path $Root "dist\Talk Dat! Uninstaller.exe"
+$InstallerExe = Join-Path $Root "dist\Talk Dat! Installer.exe"
 $ReleaseDir = Join-Path $Root "release"
-$ReleaseInstaller = Join-Path $ReleaseDir "Talk-Dat-Shi-Setup.exe"
+$ReleaseInstaller = Join-Path $ReleaseDir "Talk-Dat-Setup.exe"
 $IconPath = Join-Path $Root "knight_flow\assets\app_icon.ico"
 $StartHereDoc = Join-Path $Root "docs\START_HERE_WINDOWS.md"
 $InstallDoc = Join-Path $Root "docs\INSTALL.md"
@@ -63,7 +63,7 @@ foreach ($AssetAdd in $AssetAdds) {
         $UninstallerArgs += @("--add-data", "$($AssetAdd[0]);$($AssetAdd[1])")
     }
 }
-$UninstallerArgs += @("--name", "Talk Dat Shi Uninstaller", (Join-Path $Root "installer\uninstall_entry.py"))
+$UninstallerArgs += @("--name", "Talk Dat! Uninstaller", (Join-Path $Root "installer\uninstall_entry.py"))
 
 & $Python $UninstallerArgs
 
@@ -84,7 +84,7 @@ $InstallerArgs += @(
     "--add-data", "$StartHereDoc;payload/docs",
     "--add-data", "$InstallDoc;payload/docs",
     "--add-data", "$ProvidersDoc;payload/docs",
-    "--name", "Talk Dat Shi Installer",
+    "--name", "Talk Dat! Installer",
     (Join-Path $Root "installer\install_entry.py")
 )
 

@@ -3,7 +3,7 @@
 This repository is published at:
 
 ```text
-https://github.com/MAYOWA-007/talk-dat-shi
+https://github.com/MAYOWA-007/talk-dat
 ```
 
 ## Recommended Ownership
@@ -19,13 +19,13 @@ From the project root:
 ```powershell
 python .\scripts\prepublish_check.py
 git init
-git add .gitignore .gitattributes .env.example README.md SECURITY.md CONTRIBUTING.md requirements.txt *.ps1 talk_dat_shi.py knight_flow docs installer scripts
+git add .gitignore .gitattributes .env.example README.md SECURITY.md CONTRIBUTING.md requirements.txt *.ps1 talk_dat.py knight_flow docs installer scripts
 git status --short
 git diff --cached --stat
 git diff --cached
-git commit -m "Prepare public Talk Dat Shi release"
+git commit -m "Prepare public Talk Dat! release"
 git branch -M main
-git remote add origin https://github.com/MAYOWA-007/talk-dat-shi.git
+git remote add origin https://github.com/MAYOWA-007/talk-dat.git
 git push -u origin main
 ```
 
@@ -46,8 +46,8 @@ git push origin v0.1.0
 
 The workflow creates:
 
-- `Talk-Dat-Shi-Setup.exe` custom glass installer
-- `Talk-Dat-Shi-Windows-Portable.zip`
+- `Talk-Dat-Setup.exe` custom glass installer
+- `Talk-Dat-Windows-Portable.zip`
 - `SHA256SUMS.txt`
 
 For a local manual build:
@@ -56,4 +56,4 @@ For a local manual build:
 powershell -ExecutionPolicy Bypass -File .\build-custom-installer.ps1
 ```
 
-Upload `release\Talk-Dat-Shi-Setup.exe`, a portable ZIP, and checksums to a GitHub Release. Do not commit `release/`, `dist/`, `build/`, generated `.spec` files, API keys, private config, or transcript history.
+Upload `release\Talk-Dat-Setup.exe`, a portable ZIP, and checksums to a GitHub Release. Do not commit `release/`, `dist/`, `build/`, generated `.spec` files, API keys, private config, or transcript history.

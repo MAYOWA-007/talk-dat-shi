@@ -1,6 +1,6 @@
 # Talk Stone
 
-Talk Stone is the official Talk Dat Shi app mark. It uses a black roman-clay / limewash surface with the Flow waveform material preserved inside the bars.
+Talk Stone is the official Talk Dat! app mark. It uses a black roman-clay / limewash surface with the Flow waveform material preserved inside the bars.
 
 - `talk-stone-transparent.png`: 2048 x 2048 transparent PNG source
 - `talk-stone-preview-light.jpg`: preview on light background

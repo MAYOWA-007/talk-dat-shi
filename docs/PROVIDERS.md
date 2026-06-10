@@ -1,6 +1,6 @@
 # Provider Support
 
-Talk Dat Shi has a provider registry so users can choose a brand, model, mode/trim, API base, and key from Settings or first-run onboarding.
+Talk Dat! has a provider registry so users can choose a brand, model, mode/trim, API base, and key from Settings or first-run onboarding.
 
 ## Wired Adapters
 
@@ -27,7 +27,7 @@ Provider-specific advanced options are saved as JSON per provider and passed int
 
 ## Registered But Adapter-Pending
 
-These providers appear in the model registry so the UI and config are ready, but they still need dedicated authentication/request adapters before they can transcribe in Talk Dat Shi.
+These providers appear in the model registry so the UI and config are ready, but they still need dedicated authentication/request adapters before they can transcribe in Talk Dat!.
 
 - Google Cloud Speech
 - Microsoft Azure Speech
@@ -45,12 +45,12 @@ These providers appear in the model registry so the UI and config are ready, but
 Keys are not stored in the repo. User-entered keys are saved only in:
 
 ```text
-%APPDATA%\TalkDatShi\config.json
+%APPDATA%\TalkDat\config.json
 ```
 
 Users may also provide keys through environment variables such as `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `ELEVENLABS_API_KEY`, `ASSEMBLYAI_API_KEY`, and `GEMINI_API_KEY`.
 
-Custom dictionary words, snippets, provider advanced options, transcript history, live drafts, and scratchpad tabs are also user-private local files under `%APPDATA%\TalkDatShi`. Public GitHub downloads start empty.
+Custom dictionary words, snippets, provider advanced options, transcript history, live drafts, and scratchpad tabs are also user-private local files under `%APPDATA%\TalkDat`. Public GitHub downloads start empty.
 
 ## Adding A Provider
 

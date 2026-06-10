@@ -6,10 +6,10 @@ Do not post API keys, transcripts, or private config files in GitHub issues. If 
 
 ## Secrets
 
-Talk Dat Shi is a bring-your-own-key application. The repo should never contain provider keys. User keys are stored locally in:
+Talk Dat! is a bring-your-own-key application. The repo should never contain provider keys. User keys are stored locally in:
 
 ```text
-%APPDATA%\TalkDatShi\config.json
+%APPDATA%\TalkDat\config.json
 ```
 
 Before publishing or releasing, run:
