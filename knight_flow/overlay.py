@@ -2055,12 +2055,12 @@ class Overlay:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("Flow.TNotebook", background=palette["bg"], borderwidth=0)
+        style.configure("Flow.TNotebook", background=palette["bg"], borderwidth=0, tabmargins=(0, 2, 0, 0))
         style.configure(
             "Flow.TNotebook.Tab",
             background=palette["button"],
             foreground=palette["muted"],
-            padding=(14, 8),
+            padding=(10, 9),
             font=("Segoe UI Semibold", 9),
         )
         style.map(
@@ -2398,7 +2398,7 @@ class Overlay:
         ui = self.config.setdefault("ui", {})
         theme = self._settings_theme_key(str(ui.get("settings_theme") or ui.get("theme") or "Flow Dark"))
         palette = self._settings_palette(theme)
-        window = self._utility_window("settings", "Talk Dat Shi Settings", "980x760", bg=palette["bg"])
+        window = self._utility_window("settings", "Talk Dat Shi Settings", "1120x760", bg=palette["bg"])
         if window is None:
             return
         window.configure(bg=palette["bg"])
