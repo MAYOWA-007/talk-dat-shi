@@ -14,14 +14,14 @@
 - Hold `Ctrl+Win` to dictate while held.
 - Click the pill to toggle hands-free dictation.
 - Click the pill again, or press a trigger combo, to stop.
-- Right-click the pill for Settings and History.
+- Right-click the pill for Settings, History, and Scratchpad.
 - Use `Ctrl+Win+Esc` as panic stop.
 
 ## Privacy
 
 This download does not include API keys or private user data.
 
-Your keys, provider options, dictionary, snippets, transcript history, live draft, and scratchpad are saved locally under:
+Your keys, provider options, dictionary, snippets, transcript history, live draft, and scratchpad tabs are saved locally under:
 
 ```text
 %APPDATA%\TalkDatShi

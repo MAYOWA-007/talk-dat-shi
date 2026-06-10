@@ -16,7 +16,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Animated bottom overlay that is idle until activated.
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
-- Right-click overlay menu for Settings and History.
+- Right-click overlay menu for Settings, History, and a tabbed local Scratchpad.
 - Glass settings UI with 10 named theme families in dark and light variants.
 - Local transcript history and live draft files.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
@@ -119,6 +119,7 @@ Local files:
 %APPDATA%\TalkDatShi\history.jsonl
 %APPDATA%\TalkDatShi\full-transcript-history.txt
 %APPDATA%\TalkDatShi\live-transcript-draft.txt
+%APPDATA%\TalkDatShi\scratchpad-tabs.json
 ```
 
 Do not commit these files.

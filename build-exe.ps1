@@ -8,9 +8,17 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $ExePath = Join-Path $Root "dist\Talk Dat Shi.exe"
 $AssetsPath = Join-Path $Root "knight_flow\assets"
+$AssetIconPath = Join-Path $AssetsPath "app_icon.ico"
+$ShortcutIconPath = Join-Path (Split-Path -Parent $ExePath) "Talk Dat Shi.ico"
 $RuntimeAssets = @(
+    "app_icon.ico",
+    "app_icon.png",
+    "favicon.ico",
+    "favicon.png",
     "flow_pill_240.png",
-    "flow_pill_240.json"
+    "flow_pill_240.json",
+    "logo.ico",
+    "logo.png"
 )
 
 if (-not (Test-Path $Python)) {
@@ -21,7 +29,10 @@ if (-not (Test-Path $Python)) {
 & $Python -m pip install -r (Join-Path $Root "requirements.txt")
 & $Python -m pip install pyinstaller
 
-$IconPath = (& $Python -c "from knight_flow.icon import ensure_icon_file; print(ensure_icon_file())").Trim()
+$IconPath = $AssetIconPath
+if (-not (Test-Path $IconPath)) {
+    $IconPath = (& $Python -c "from knight_flow.icon import ensure_icon_file; print(ensure_icon_file())").Trim()
+}
 
 $PyInstallerArgs = @(
     "-m", "PyInstaller",
@@ -48,8 +59,12 @@ $PyInstallerArgs += (Join-Path $Root "talk_dat_shi.py")
 
 & $Python @PyInstallerArgs
 
+Copy-Item $IconPath $ShortcutIconPath -Force
+
 Write-Output "Built:"
 Write-Output $ExePath
+Write-Output "Shortcut icon:"
+Write-Output $ShortcutIconPath
 
 if ($CreateDesktopShortcut) {
     $Desktop = [Environment]::GetFolderPath("Desktop")
@@ -58,7 +73,7 @@ if ($CreateDesktopShortcut) {
     $Shortcut = $Shell.CreateShortcut($ShortcutPath)
     $Shortcut.TargetPath = $ExePath
     $Shortcut.WorkingDirectory = Split-Path -Parent $ExePath
-    $Shortcut.IconLocation = "$ExePath,0"
+    $Shortcut.IconLocation = "$ShortcutIconPath,0"
     $Shortcut.Description = "Launch Talk Dat Shi dictation overlay."
     $Shortcut.Save()
     Write-Output "Desktop shortcut:"

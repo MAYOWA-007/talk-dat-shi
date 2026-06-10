@@ -50,7 +50,7 @@ Keys are not stored in the repo. User-entered keys are saved only in:
 
 Users may also provide keys through environment variables such as `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `ELEVENLABS_API_KEY`, `ASSEMBLYAI_API_KEY`, and `GEMINI_API_KEY`.
 
-Custom dictionary words, snippets, provider advanced options, transcript history, live drafts, and scratchpad content are also user-private local files under `%APPDATA%\TalkDatShi`. Public GitHub downloads start empty.
+Custom dictionary words, snippets, provider advanced options, transcript history, live drafts, and scratchpad tabs are also user-private local files under `%APPDATA%\TalkDatShi`. Public GitHub downloads start empty.
 
 ## Adding A Provider
 

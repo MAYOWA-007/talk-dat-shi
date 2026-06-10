@@ -116,10 +116,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "compact_height": 38,
         "wave_loop_start": 0,
         "wave_loop_end": 50,
-        "active_frame_ms": 16,
+        "active_frame_ms": 12,
         "idle_frame_ms": 33,
-        "resize_frame_ms": 12,
-        "active_loop_seconds": 3.84,
+        "resize_frame_ms": 8,
+        "resize_steps": 8,
+        "active_loop_seconds": 2.6,
         "idle_loop_seconds": 8.0,
         "bottom_margin": 68,
         "result_hold_ms": 900,
@@ -170,6 +171,10 @@ def live_draft_path() -> Path:
 
 def scratchpad_path() -> Path:
     return app_dir() / "scratchpad.md"
+
+
+def scratchpad_tabs_path() -> Path:
+    return app_dir() / "scratchpad-tabs.json"
 
 
 def load_project_env(start: Path | None = None) -> None:

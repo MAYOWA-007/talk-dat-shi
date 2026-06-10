@@ -14,7 +14,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
-from .config import config_path, full_history_path, history_path, live_draft_path, scratchpad_path
+from .config import config_path, full_history_path, history_path, live_draft_path, scratchpad_path, scratchpad_tabs_path
 from .icon import ensure_icon_file
 from .stt_registry import (
     PROVIDER_BY_ID,
@@ -424,7 +424,8 @@ class Overlay:
             self._apply_geometry(target_width, target_height)
             return
 
-        self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, 20)
+        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 8), 4, 14))
+        self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, steps)
 
     def _animate_resize(
         self,
@@ -1310,8 +1311,8 @@ class Overlay:
 
     def _open_context_menu(self, x_root: int, y_root: int) -> None:
         self._close_context_menu()
-        width = 292
-        height = 146
+        width = 318
+        height = 206
         window = tk.Toplevel(self.root)
         window.overrideredirect(True)
         window.attributes("-topmost", True)
@@ -1323,7 +1324,7 @@ class Overlay:
             pass
 
         left, top, right, bottom = self._logical_work_area()
-        x = min(max(left + 8, x_root - width + 18), right - width - 8)
+        x = min(max(left + 8, x_root - width // 2), right - width - 8)
         preferred_y = y_root - height - 12
         y = preferred_y if preferred_y > top + 8 else min(bottom - height - 8, y_root + 12)
         window.geometry(f"{width}x{height}+{x}+{y}")
@@ -1342,7 +1343,7 @@ class Overlay:
         canvas.bind("<Button-3>", lambda _event: self._close_context_menu())
 
         window.update_idletasks()
-        self._apply_window_region(window, width, height, 26)
+        self._apply_window_region(window, width, height, 28)
         self._draw_context_menu()
         window.after(30, window.focus_force)
         self._animate_context_menu()
@@ -1392,13 +1393,17 @@ class Overlay:
             self.open_settings()
         elif action == "history":
             self.open_history()
+        elif action == "scratchpad":
+            self.open_scratchpad()
         return "break"
 
     def _context_menu_action_at(self, y: int) -> str:
-        if 20 <= y <= 68:
+        if 18 <= y <= 66:
             return "settings"
-        if 76 <= y <= 124:
+        if 78 <= y <= 126:
             return "history"
+        if 138 <= y <= 186:
+            return "scratchpad"
         return ""
 
     def _animate_context_menu(self) -> None:
@@ -1425,41 +1430,31 @@ class Overlay:
         canvas.create_image(0, 0, image=self.context_menu_photo, anchor="nw")
         settings_active = self.context_menu_hover == "settings"
         history_active = self.context_menu_hover == "history"
+        scratchpad_active = self.context_menu_hover == "scratchpad"
         palette = self._settings_palette(self._settings_theme_key())
-        self._draw_gear_icon(canvas, 42, 44, settings_active)
-        self._draw_history_icon(canvas, 42, 100, history_active)
-        canvas.create_text(
-            72,
-            37,
-            text="Settings",
-            anchor="w",
-            fill=palette["warm"] if settings_active else palette["text"],
-            font=("Segoe UI Semibold", 11),
-        )
-        canvas.create_text(
-            72,
-            53,
-            text="Controls, providers, themes",
-            anchor="w",
-            fill=palette["muted"],
-            font=("Segoe UI", 8),
-        )
-        canvas.create_text(
-            72,
-            93,
-            text="History",
-            anchor="w",
-            fill=palette["warm"] if history_active else palette["text"],
-            font=("Segoe UI Semibold", 11),
-        )
-        canvas.create_text(
-            72,
-            109,
-            text="Private local transcript archive",
-            anchor="w",
-            fill=palette["muted"],
-            font=("Segoe UI", 8),
-        )
+        rows = [
+            ("settings", 42, "Settings", "Controls, providers, themes", settings_active, self._draw_gear_icon),
+            ("history", 102, "History", "Private local transcript archive", history_active, self._draw_history_icon),
+            ("scratchpad", 162, "Scratchpad", "Tabbed local notes", scratchpad_active, self._draw_scratchpad_icon),
+        ]
+        for _name, cy, title, subtitle, active, icon_drawer in rows:
+            icon_drawer(canvas, 48, cy, active)
+            canvas.create_text(
+                82,
+                cy - 8,
+                text=title,
+                anchor="w",
+                fill=palette["warm"] if active else palette["text"],
+                font=("Segoe UI Semibold", 12),
+            )
+            canvas.create_text(
+                82,
+                cy + 10,
+                text=subtitle,
+                anchor="w",
+                fill=palette["muted"] if not active else "#d8fdf2",
+                font=("Segoe UI", 9),
+            )
 
     def _context_menu_background(self, width: int, height: int, hover: str) -> Image.Image:
         key_rgb = self._rgb(TRANSPARENT_COLOR)
@@ -1468,55 +1463,63 @@ class Overlay:
         field = self._compact_wave_frame(width, height, active=True) or self._compact_reference_fallback(width, height)
         if field.mode != "RGBA":
             field = field.convert("RGBA")
-        field = ImageEnhance.Color(field).enhance(1.25)
-        field = ImageEnhance.Contrast(field).enhance(1.08)
-        field = field.filter(ImageFilter.GaussianBlur(radius=1.4))
+        field = ImageEnhance.Color(field).enhance(1.16)
+        field = ImageEnhance.Contrast(field).enhance(1.06)
+        field = field.filter(ImageFilter.GaussianBlur(radius=0.85))
 
         panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         mask = Image.new("L", (width, height), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=26, fill=255)
+        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=28, fill=255)
         panel.paste(field, (0, 0), mask)
 
-        veil_color = (248, 252, 248, 178) if light else (3, 13, 16, 194)
+        veil_color = (246, 251, 248, 154) if light else (3, 12, 15, 170)
         veil = Image.new("RGBA", (width, height), veil_color)
         panel = Image.alpha_composite(panel, veil)
         draw = ImageDraw.Draw(panel)
-        pulse = 0.5 + 0.5 * math.sin(self.phase / 12.0)
-        side_mask = Image.new("L", (width, height), 0)
-        side_draw = ImageDraw.Draw(side_mask)
-        side_draw.rounded_rectangle((0, 0, 104, height - 1), radius=26, fill=112)
-        side_texture = field.crop((0, 0, min(field.width, width), min(field.height, height)))
-        panel.paste(side_texture, (0, 0), side_mask)
+        pulse = 0.5 + 0.5 * math.sin(self.phase / 16.0)
 
-        for name, top in (("settings", 18), ("history", 74)):
+        wash = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        wash_draw = ImageDraw.Draw(wash)
+        wash_draw.rounded_rectangle((8, 8, width - 9, height - 9), radius=24, fill=(0, 0, 0, 44 if light else 86))
+        wash_draw.rounded_rectangle((12, 12, 112, height - 13), radius=21, fill=(255, 75, 33, 34))
+        wash_draw.rounded_rectangle((width - 118, 12, width - 13, height - 13), radius=21, fill=(0, 210, 205, 26))
+        panel = Image.alpha_composite(panel, wash)
+        draw = ImageDraw.Draw(panel)
+
+        rows = (("settings", 18), ("history", 78), ("scratchpad", 138))
+        for name, top in rows:
             active = hover == name
-            fill = (255, 255, 255, 232 if light else 18) if active else ((255, 255, 255, 210) if light else (6, 14, 16, 228))
-            outline = self._hex_rgba(palette["accent"], int(100 + pulse * 35)) if active else self._hex_rgba(palette["stroke"], 96)
-            draw.rounded_rectangle((14, top, width - 14, top + 48), radius=18, fill=fill, outline=outline, width=1)
+            if light:
+                fill = (255, 255, 255, 230 if active else 206)
+            else:
+                fill = (8, 19, 21, 242 if active else 228)
+            outline = self._hex_rgba(palette["accent"], int(92 + pulse * 38)) if active else (197, 235, 222, 42)
+            draw.rounded_rectangle((14, top, width - 14, top + 48), radius=15, fill=fill, outline=outline, width=1)
+            draw.line((30, top + 47, width - 30, top + 47), fill=(255, 225, 158, 18 if not active else 34), width=1)
             if active:
                 glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
                 glow_draw = ImageDraw.Draw(glow)
                 glow_draw.rounded_rectangle(
-                    (11, top - 2, width - 11, top + 50),
-                    radius=20,
-                    outline=self._hex_rgba(palette["warm"], 110),
+                    (12, top - 1, width - 12, top + 49),
+                    radius=17,
+                    outline=self._hex_rgba(palette["warm"], 96),
                     width=2,
                 )
-                panel = Image.alpha_composite(panel, glow.filter(ImageFilter.GaussianBlur(radius=2.2)))
+                panel = Image.alpha_composite(panel, glow.filter(ImageFilter.GaussianBlur(radius=1.6)))
                 draw = ImageDraw.Draw(panel)
         draw.rounded_rectangle(
             (1, 1, width - 2, height - 2),
-            radius=26,
-            outline=self._hex_rgba(palette["accent"], int(86 + pulse * 24)),
+            radius=28,
+            outline=self._hex_rgba(palette["accent"], int(80 + pulse * 18)),
             width=1,
         )
-        draw.rounded_rectangle((5, 5, width - 6, 34), radius=18, fill=(255, 255, 255, 42 if light else 14))
+        draw.rounded_rectangle((7, 7, width - 8, 36), radius=20, fill=(255, 255, 255, 24 if light else 8))
 
         halo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         halo_draw = ImageDraw.Draw(halo)
-        halo_draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=26, outline=self._hex_rgba(palette["warm"], 82), width=2)
-        panel = Image.alpha_composite(panel, halo.filter(ImageFilter.GaussianBlur(radius=2.2)))
+        halo_draw.rounded_rectangle((2, 2, width - 3, height - 3), radius=28, outline=self._hex_rgba(palette["warm"], 58), width=2)
+        panel = Image.alpha_composite(panel, halo.filter(ImageFilter.GaussianBlur(radius=1.5)))
         keyed = Image.new("RGBA", (width, height), (*key_rgb, 255))
         keyed.paste(panel, (0, 0), panel.split()[-1])
         return keyed.convert("RGB")
@@ -1540,6 +1543,14 @@ class Overlay:
         canvas.create_line(cx - 11, cy - 8, cx - 11, cy - 13, fill=color, width=2, capstyle="round")
         canvas.create_line(cx, cy, cx, cy - 8, fill=color, width=2, capstyle="round")
         canvas.create_line(cx, cy, cx + 7, cy + 4, fill=color, width=2, capstyle="round")
+
+    def _draw_scratchpad_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        muted = "#ffb45d" if active else "#6fc8be"
+        canvas.create_rectangle(cx - 12, cy - 15, cx + 12, cy + 15, outline=color, width=2)
+        canvas.create_line(cx - 6, cy - 7, cx + 6, cy - 7, fill=muted, width=2, capstyle="round")
+        canvas.create_line(cx - 6, cy, cx + 7, cy, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx - 6, cy + 7, cx + 4, cy + 7, fill=color, width=2, capstyle="round")
 
     def _focus_utility_window(self, name: str) -> bool:
         window = self.utility_windows.get(name)
@@ -3206,40 +3217,350 @@ class Overlay:
             )
         return "\n\n".join(sections) + "\n"
 
+    def _scratchpad_timestamp(self) -> str:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+    def _new_scratchpad_tab(self, index: int, text: str = "") -> dict[str, Any]:
+        now = self._scratchpad_timestamp()
+        return {
+            "id": f"note-{int(time.time() * 1000)}-{index}",
+            "title": f"Note {index}",
+            "text": text,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def _clean_scratchpad_tab(self, raw: Any, index: int) -> dict[str, Any]:
+        now = self._scratchpad_timestamp()
+        if not isinstance(raw, dict):
+            return self._new_scratchpad_tab(index)
+        title = str(raw.get("title") or f"Note {index}").strip()[:64] or f"Note {index}"
+        tab_id = str(raw.get("id") or f"note-{index}-{int(time.time() * 1000)}").strip()
+        return {
+            "id": tab_id,
+            "title": title,
+            "text": str(raw.get("text") or ""),
+            "created_at": str(raw.get("created_at") or now),
+            "updated_at": str(raw.get("updated_at") or raw.get("created_at") or now),
+        }
+
+    def _load_scratchpad_tabs(self) -> dict[str, Any]:
+        path = scratchpad_tabs_path()
+        legacy_path = scratchpad_path()
+        raw_doc: dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                raw_doc = loaded if isinstance(loaded, dict) else {}
+            except (OSError, json.JSONDecodeError):
+                raw_doc = {}
+
+        raw_tabs = raw_doc.get("tabs")
+        tabs = [
+            self._clean_scratchpad_tab(tab, index + 1)
+            for index, tab in enumerate(raw_tabs[:99] if isinstance(raw_tabs, list) else [])
+        ]
+        if not tabs:
+            legacy_text = ""
+            if legacy_path.exists():
+                try:
+                    legacy_text = legacy_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    legacy_text = ""
+            tabs = [self._new_scratchpad_tab(1, legacy_text)]
+
+        ids = {tab["id"] for tab in tabs}
+        last_tab_id = str(raw_doc.get("last_tab_id") or tabs[0]["id"])
+        if last_tab_id not in ids:
+            last_tab_id = tabs[0]["id"]
+        return {"version": 1, "last_tab_id": last_tab_id, "tabs": tabs[:99]}
+
+    def _save_scratchpad_tabs(self, doc: dict[str, Any]) -> None:
+        path = scratchpad_tabs_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(path)
+
     def open_scratchpad(self) -> None:
         self.force_visible()
-        path = scratchpad_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        window = self._utility_window("scratchpad", "Talk Dat Shi Scratchpad", "720x540", bg="#071113")
+        doc = self._load_scratchpad_tabs()
+        window = self._utility_window("scratchpad", "Talk Dat Shi Scratchpad", "980x680", bg="#040b0e")
         if window is None:
             return
-        self._make_glass_titlebar(window, "Scratchpad", "#071113")
+        self._make_glass_titlebar(window, "Scratchpad", "#040b0e", "#fff2cf")
+
+        active_id = {"value": str(doc["last_tab_id"])}
+        pending_save = {"id": None}
+        loading = {"value": False}
+        refreshing_tabs = {"value": False}
+
+        shell = tk.Frame(window, bg="#040b0e", bd=0, highlightthickness=0)
+        shell.pack(fill="both", expand=True, padx=16, pady=(10, 14))
+        shell.columnconfigure(1, weight=1)
+        shell.rowconfigure(0, weight=1)
+
+        sidebar = tk.Frame(shell, bg="#061114", bd=0, highlightthickness=1, highlightbackground="#164b49")
+        sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        sidebar.rowconfigure(1, weight=1)
+
+        tk.Label(
+            sidebar,
+            text="Notes",
+            bg="#061114",
+            fg="#ffe1a3",
+            font=("Segoe UI Semibold", 11),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
+
+        tab_list = tk.Listbox(
+            sidebar,
+            width=26,
+            height=18,
+            activestyle="none",
+            exportselection=False,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            bg="#061114",
+            fg="#d7f8f0",
+            selectbackground="#123f3e",
+            selectforeground="#fff2cf",
+            font=("Segoe UI Semibold", 9),
+        )
+        tab_scroll = ttk.Scrollbar(sidebar, orient="vertical", command=tab_list.yview)
+        tab_list.configure(yscrollcommand=tab_scroll.set)
+        tab_list.grid(row=1, column=0, sticky="nsew", padx=(12, 0), pady=(0, 8))
+        tab_scroll.grid(row=1, column=1, sticky="ns", padx=(0, 8), pady=(0, 8))
+
+        side_buttons = tk.Frame(sidebar, bg="#061114")
+        side_buttons.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 12))
+
+        main = tk.Frame(shell, bg="#040b0e", bd=0, highlightthickness=1, highlightbackground="#183b3d")
+        main.grid(row=0, column=1, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(2, weight=1)
+
+        title_var = tk.StringVar()
+        meta_var = tk.StringVar()
+        save_var = tk.StringVar(value="Autosave ready")
+
+        title_entry = tk.Entry(
+            main,
+            textvariable=title_var,
+            bg="#071316",
+            fg="#fff4d7",
+            insertbackground="#ffdd91",
+            relief="flat",
+            font=("Segoe UI Semibold", 16),
+            bd=0,
+        )
+        title_entry.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
+
+        meta = tk.Label(
+            main,
+            textvariable=meta_var,
+            bg="#040b0e",
+            fg="#8dbfba",
+            font=("Segoe UI", 9),
+            anchor="w",
+        )
+        meta.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+
+        text_shell = tk.Frame(main, bg="#071316", bd=0, highlightthickness=1, highlightbackground="#1d5652")
+        text_shell.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 10))
+        text_shell.columnconfigure(0, weight=1)
+        text_shell.rowconfigure(0, weight=1)
+
         text = tk.Text(
-            window,
+            text_shell,
             wrap="word",
             undo=True,
-            font=("Segoe UI", 11),
-            bg="#102126",
-            fg="#f2f5fb",
-            insertbackground="#ffffff",
-            selectbackground="#27514d",
+            font=("Cascadia Mono", 12),
+            bg="#071316",
+            fg="#f7f0dd",
+            insertbackground="#ffd476",
+            selectbackground="#255d58",
+            selectforeground="#ffffff",
             bd=0,
-            padx=12,
-            pady=12,
+            padx=18,
+            pady=16,
+            spacing1=3,
+            spacing2=1,
+            spacing3=7,
         )
-        text.pack(fill="both", expand=True, padx=14, pady=(10, 8))
-        if path.exists():
-            text.insert("1.0", path.read_text(encoding="utf-8"))
+        text_scroll = ttk.Scrollbar(text_shell, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=text_scroll.set)
+        text.grid(row=0, column=0, sticky="nsew")
+        text_scroll.grid(row=0, column=1, sticky="ns")
+        text.tag_configure("focus_line", background="#0d282b")
+        text.tag_configure("recent_input", foreground="#ffe1a3")
 
-        row = tk.Frame(window, bg="#071113")
-        row.pack(fill="x", padx=14, pady=(0, 12))
+        footer = tk.Frame(main, bg="#040b0e")
+        footer.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
+        footer.columnconfigure(0, weight=1)
+        save_label = tk.Label(
+            footer,
+            textvariable=save_var,
+            bg="#040b0e",
+            fg="#8dbfba",
+            font=("Segoe UI", 9),
+            anchor="w",
+        )
+        save_label.grid(row=0, column=0, sticky="ew")
 
-        def save() -> None:
-            path.write_text(text.get("1.0", "end-1c"), encoding="utf-8")
-            self.set_state("captured", "Scratchpad saved.", str(path))
+        def active_tab() -> dict[str, Any]:
+            tabs = doc["tabs"]
+            for tab in tabs:
+                if tab["id"] == active_id["value"]:
+                    return tab
+            active_id["value"] = tabs[0]["id"]
+            return tabs[0]
 
-        ttk.Button(row, text="Save", command=save, style="Flow.TButton").pack(side="left", padx=(0, 8), pady=8)
-        ttk.Button(row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="left", padx=8, pady=8)
+        def tab_label(tab: dict[str, Any], index: int) -> str:
+            updated = str(tab.get("updated_at", ""))[5:16].replace("-", "/")
+            return f"{index + 1:02d}  {str(tab.get('title') or 'Untitled')[:18]:<18} {updated}"
+
+        def refresh_tab_list() -> None:
+            refreshing_tabs["value"] = True
+            selected_index = 0
+            tab_list.delete(0, "end")
+            for index, tab in enumerate(doc["tabs"]):
+                if tab["id"] == active_id["value"]:
+                    selected_index = index
+                tab_list.insert("end", tab_label(tab, index))
+            tab_list.selection_clear(0, "end")
+            tab_list.selection_set(selected_index)
+            tab_list.activate(selected_index)
+            tab_list.see(selected_index)
+            refreshing_tabs["value"] = False
+
+        def set_editor_from_tab(tab: dict[str, Any]) -> None:
+            loading["value"] = True
+            title_var.set(str(tab.get("title") or "Untitled"))
+            text.delete("1.0", "end")
+            text.insert("1.0", str(tab.get("text") or ""))
+            meta_var.set(f"Created {tab.get('created_at', '')}   Updated {tab.get('updated_at', '')}")
+            loading["value"] = False
+            highlight_current_line()
+
+        def save_now(mark_updated: bool = True, quiet: bool = False) -> None:
+            if pending_save["id"] is not None:
+                try:
+                    window.after_cancel(pending_save["id"])
+                except tk.TclError:
+                    pass
+                pending_save["id"] = None
+            tab = active_tab()
+            tab["title"] = title_var.get().strip()[:64] or "Untitled"
+            tab["text"] = text.get("1.0", "end-1c")
+            if mark_updated:
+                tab["updated_at"] = self._scratchpad_timestamp()
+            doc["last_tab_id"] = tab["id"]
+            self._save_scratchpad_tabs(doc)
+            meta_var.set(f"Created {tab.get('created_at', '')}   Updated {tab.get('updated_at', '')}")
+            save_var.set(f"Saved {self._scratchpad_timestamp()} to {scratchpad_tabs_path()}")
+            refresh_tab_list()
+            if not quiet:
+                self.set_state("captured", "Scratchpad saved.", str(scratchpad_tabs_path()))
+
+        def schedule_save(_event: tk.Event | None = None) -> None:
+            if loading["value"]:
+                return
+            save_var.set("Autosaving...")
+            highlight_current_line(karaoke=True)
+            if pending_save["id"] is not None:
+                try:
+                    window.after_cancel(pending_save["id"])
+                except tk.TclError:
+                    pass
+            pending_save["id"] = window.after(520, lambda: save_now(mark_updated=True, quiet=True))
+
+        def select_tab_by_index(index: int) -> None:
+            if index < 0 or index >= len(doc["tabs"]):
+                return
+            save_now(mark_updated=True, quiet=True)
+            active_id["value"] = doc["tabs"][index]["id"]
+            doc["last_tab_id"] = active_id["value"]
+            set_editor_from_tab(doc["tabs"][index])
+            refresh_tab_list()
+            save_now(mark_updated=False, quiet=True)
+            text.focus_set()
+
+        def on_tab_select(_event: tk.Event | None = None) -> None:
+            if refreshing_tabs["value"]:
+                return
+            selection = tab_list.curselection()
+            if not selection:
+                return
+            select_tab_by_index(int(selection[0]))
+
+        def add_tab() -> None:
+            if len(doc["tabs"]) >= 99:
+                save_var.set("99 tabs max.")
+                return
+            save_now(mark_updated=True, quiet=True)
+            tab = self._new_scratchpad_tab(len(doc["tabs"]) + 1)
+            doc["tabs"].append(tab)
+            active_id["value"] = tab["id"]
+            doc["last_tab_id"] = tab["id"]
+            set_editor_from_tab(tab)
+            refresh_tab_list()
+            save_now(mark_updated=False, quiet=True)
+            text.focus_set()
+
+        def delete_tab() -> None:
+            tabs = doc["tabs"]
+            current = active_tab()
+            if len(tabs) <= 1:
+                current["title"] = "Note 1"
+                current["text"] = ""
+                current["updated_at"] = self._scratchpad_timestamp()
+                set_editor_from_tab(current)
+                save_now(mark_updated=False, quiet=True)
+                return
+            index = tabs.index(current)
+            del tabs[index]
+            next_index = min(index, len(tabs) - 1)
+            active_id["value"] = tabs[next_index]["id"]
+            doc["last_tab_id"] = active_id["value"]
+            set_editor_from_tab(tabs[next_index])
+            refresh_tab_list()
+            save_now(mark_updated=False, quiet=True)
+
+        def highlight_current_line(karaoke: bool = False) -> None:
+            text.tag_remove("focus_line", "1.0", "end")
+            text.tag_add("focus_line", "insert linestart", "insert lineend+1c")
+            if karaoke:
+                text.tag_remove("recent_input", "1.0", "end")
+                text.tag_add("recent_input", "insert linestart", "insert lineend+1c")
+                window.after(260, lambda: text.tag_remove("recent_input", "1.0", "end"))
+
+        def close_window() -> None:
+            save_now(mark_updated=True, quiet=True)
+            window.destroy()
+
+        ttk.Button(side_buttons, text="New", command=add_tab, style="Flow.TButton").pack(
+            side="left", padx=(0, 6), pady=4
+        )
+        ttk.Button(side_buttons, text="Delete", command=delete_tab, style="Flow.TButton").pack(
+            side="left", padx=6, pady=4
+        )
+        ttk.Button(footer, text="Save", command=lambda: save_now(mark_updated=True), style="Flow.TButton").grid(
+            row=0, column=1, padx=(10, 0)
+        )
+        ttk.Button(footer, text="Close", command=close_window, style="Flow.TButton").grid(row=0, column=2, padx=(8, 0))
+
+        tab_list.bind("<<ListboxSelect>>", on_tab_select)
+        title_var.trace_add("write", lambda *_args: schedule_save())
+        text.bind("<KeyRelease>", schedule_save)
+        text.bind("<<Paste>>", lambda _event: window.after(20, schedule_save))
+        text.bind("<ButtonRelease-1>", lambda _event: highlight_current_line())
+        window.protocol("WM_DELETE_WINDOW", close_window)
+
+        set_editor_from_tab(active_tab())
+        refresh_tab_list()
+        text.focus_set()
 
     def close(self) -> None:
         callback = self.callbacks.get("quit")

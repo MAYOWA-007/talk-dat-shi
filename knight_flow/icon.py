@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
 from .config import app_dir
 
 
-ICON_VERSION = "flow-speaker-reference-2026-06-09-v2"
+ICON_VERSION = "flow-lion-roar-2026-06-09-v1"
+
+
+def _asset_path(filename: str) -> Path:
+    local_path = Path(__file__).resolve().parent / "assets" / filename
+    if local_path.exists():
+        return local_path
+    bundle_root = getattr(sys, "_MEIPASS", "")
+    if bundle_root:
+        bundled_path = Path(bundle_root) / "knight_flow" / "assets" / filename
+        if bundled_path.exists():
+            return bundled_path
+    return local_path
 
 
 def _mix(left: tuple[int, int, int], right: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
@@ -210,9 +223,13 @@ def ensure_icon_file() -> Path:
                 return path
         except OSError:
             pass
-    image = _draw_icon(256)
-    sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    image.save(path, sizes=sizes)
+    asset = _asset_path("app_icon.ico")
+    if asset.exists():
+        path.write_bytes(asset.read_bytes())
+    else:
+        image = _draw_icon(256)
+        sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+        image.save(path, sizes=sizes)
     version_path.write_text(ICON_VERSION, encoding="utf-8")
     return path
 
@@ -226,7 +243,13 @@ def ensure_tray_png_file() -> Path:
                 return path
         except OSError:
             pass
-    image = _draw_icon(64)
+    asset = _asset_path("app_icon.png")
+    if asset.exists():
+        from PIL import Image
+
+        image = Image.open(asset).convert("RGBA").resize((64, 64), _resample())
+    else:
+        image = _draw_icon(64)
     image.save(path)
     version_path.write_text(ICON_VERSION, encoding="utf-8")
     return path

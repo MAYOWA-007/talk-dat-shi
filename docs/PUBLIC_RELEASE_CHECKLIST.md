@@ -14,6 +14,7 @@ A GitHub repository has one owner: a user account or an organization. If persona
 - `%APPDATA%\TalkDatShi\history.jsonl`
 - `%APPDATA%\TalkDatShi\full-transcript-history.txt`
 - `%APPDATA%\TalkDatShi\live-transcript-draft.txt`
+- `%APPDATA%\TalkDatShi\scratchpad-tabs.json`
 - `build/`
 - `dist/`
 - `release/`

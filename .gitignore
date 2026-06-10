@@ -19,6 +19,7 @@ history.jsonl
 full-transcript-history.txt
 live-transcript-draft.txt
 scratchpad.md
+scratchpad-tabs.json
 *.log
 
 # Build and installer output
