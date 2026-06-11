@@ -122,7 +122,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "active_frame_ms": 12,
         "idle_frame_ms": 33,
         "resize_frame_ms": 6,
-        "resize_steps": 22,
+        "resize_steps": 12,
         "active_loop_seconds": 2.6,
         "idle_loop_seconds": 8.0,
         "bottom_margin": 68,
@@ -149,7 +149,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "updates": {
         "check_on_start": True,
         "auto_download": False,
-        "current_version": "0.1.0",
+        "current_version": "0.1.1",
         "last_checked_at": 0,
         "latest_version": "",
         "latest_release_url": "",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -41,6 +42,49 @@ TAP_ACTIONS = [
     "scratchpad",
 ]
 HOLD_ACTIONS = ["command_mode", "push_to_talk"]
+WATCHDOG_INTERVAL_SECONDS = 0.025
+
+
+VK_BY_NAME = {
+    "ctrl": (0x11, 0xA2, 0xA3),
+    "alt": (0x12, 0xA4, 0xA5),
+    "shift": (0x10, 0xA0, 0xA1),
+    "cmd": (0x5B, 0x5C),
+    "space": (0x20,),
+    "esc": (0x1B,),
+    "enter": (0x0D,),
+    "tab": (0x09,),
+    "backspace": (0x08,),
+    "delete": (0x2E,),
+    "home": (0x24,),
+    "end": (0x23,),
+    "page_up": (0x21,),
+    "page_down": (0x22,),
+    "middle": (0x04,),
+    "mouse4": (0x05,),
+    "mouse5": (0x06,),
+}
+
+
+def physical_key_down(name: str) -> bool | None:
+    try:
+        user32 = ctypes.windll.user32
+    except Exception:
+        return None
+
+    codes = VK_BY_NAME.get(name)
+    if codes is None and len(name) == 1 and name.isalnum():
+        codes = (ord(name.upper()),)
+    elif codes is None and name.startswith("f") and name[1:].isdigit():
+        number = int(name[1:])
+        if 1 <= number <= 24:
+            codes = (0x70 + number - 1,)
+    elif codes is None and name.isdigit():
+        codes = (int(name),)
+    if codes is None:
+        return None
+
+    return any(bool(user32.GetAsyncKeyState(code) & 0x8000) for code in codes)
 
 
 def canonical(name: str) -> str:
@@ -127,12 +171,17 @@ class HotkeyController:
         self.lock = threading.RLock()
         self.keyboard_listener: keyboard.Listener | None = None
         self.mouse_listener: mouse.Listener | None = None
+        self.watchdog_stop = threading.Event()
+        self.watchdog_thread: threading.Thread | None = None
 
     def start(self) -> None:
         self.keyboard_listener = keyboard.Listener(on_press=self._on_key_press, on_release=self._on_key_release)
         self.mouse_listener = mouse.Listener(on_click=self._on_mouse_click)
         self.keyboard_listener.start()
         self.mouse_listener.start()
+        self.watchdog_stop.clear()
+        self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self.watchdog_thread.start()
 
     def update_config(self, hotkeys: dict[str, Any], *, hold_debounce_ms: int | None = None) -> None:
         stop_action: str | None = None
@@ -149,14 +198,45 @@ class HotkeyController:
             self._trigger(stop_action)
 
     def stop(self) -> None:
+        self.watchdog_stop.set()
         self._cancel_pending()
         if self.keyboard_listener:
             self.keyboard_listener.stop()
         if self.mouse_listener:
             self.mouse_listener.stop()
+        if self.watchdog_thread and self.watchdog_thread.is_alive():
+            self.watchdog_thread.join(timeout=0.2)
+        with self.lock:
+            self.pressed.clear()
+            self.latched.clear()
+            self.active_hold = None
+            self.pending_hold = None
 
     def _matches(self, action: str) -> bool:
         return any(chord.issubset(self.pressed) for chord in self.hotkeys.get(action, []))
+
+    def _physically_matches(self, action: str) -> bool:
+        for chord in self.hotkeys.get(action, []):
+            if not chord.issubset(self.pressed):
+                continue
+            if all(self._pressed_key_is_physically_down(name) for name in chord):
+                return True
+        return False
+
+    def _pressed_key_is_physically_down(self, name: str) -> bool:
+        physical = physical_key_down(name)
+        if physical is None:
+            return name in self.pressed
+        return physical
+
+    def _hold_key_names(self) -> set[str]:
+        names: set[str] = set()
+        for action in (self.active_hold, self.pending_hold):
+            if not action:
+                continue
+            for chord in self.hotkeys.get(action, []):
+                names.update(chord)
+        return names
 
     def _matching_chord_size(self, action: str) -> int:
         matches = [len(chord) for chord in self.hotkeys.get(action, []) if chord.issubset(self.pressed)]
@@ -255,7 +335,7 @@ class HotkeyController:
             action = self.pending_hold
             self.pending_hold = None
             self.pending_timer = None
-            if not action or self.active_hold or not self._matches(action):
+            if not action or self.active_hold or not self._physically_matches(action):
                 return
             for tap_action in TAP_ACTIONS:
                 if tap_action != "cancel" and self._matches(tap_action):
@@ -268,3 +348,30 @@ class HotkeyController:
             self.pending_timer.cancel()
         self.pending_timer = None
         self.pending_hold = None
+
+    def _watchdog_loop(self) -> None:
+        while not self.watchdog_stop.wait(WATCHDOG_INTERVAL_SECONDS):
+            stop_action: str | None = None
+            with self.lock:
+                if not self.active_hold and not self.pending_hold:
+                    continue
+
+                for name in list(self._hold_key_names() & self.pressed):
+                    physical = physical_key_down(name)
+                    if physical is False:
+                        self.pressed.discard(name)
+
+                for action in list(self.latched):
+                    if not self._matches(action):
+                        self.latched.discard(action)
+
+                if self.pending_hold and not self._physically_matches(self.pending_hold):
+                    self._cancel_pending()
+
+                if self.active_hold and not self._physically_matches(self.active_hold):
+                    action = self.active_hold
+                    self.active_hold = None
+                    stop_action = f"{action}_stop"
+
+            if stop_action:
+                self._trigger(stop_action)

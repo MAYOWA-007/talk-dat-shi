@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 try:
     from knight_flow.version import APP_VERSION
 except Exception:  # pragma: no cover - standalone installer fallback.
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "0.1.1"
 
 APP_NAME = "Talk Dat!"
 PUBLISHER = "MAYOWA-007"

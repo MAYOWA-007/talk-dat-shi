@@ -58,7 +58,7 @@ class MONITORINFO(ctypes.Structure):
 
 
 TRANSPARENT_COLOR = "#010203"
-LIVE_STATES = {"starting", "connected", "listening", "processing", "command"}
+LIVE_STATES = {"starting", "connected", "listening", "command"}
 SETTINGS_THEME_FAMILIES = (
     "Flow",
     "Ember Glass",
@@ -425,6 +425,7 @@ class Overlay:
         self.compact_height = int(overlay_config.get("compact_height", max(1, round(self.active_pill_height / 2))))
         self.current_width = self.compact_width
         self.current_height = self.compact_height
+        self._last_geometry = ""
         self.bottom_margin = int(overlay_config.get("bottom_margin", 68))
         self.result_hold_ms = int(overlay_config.get("result_hold_ms", 2400))
         self.error_hold_ms = int(overlay_config.get("error_hold_ms", 5200))
@@ -725,18 +726,22 @@ class Overlay:
         self._apply_geometry(self.current_width, self.current_height)
 
     def _apply_geometry(self, width: int, height: int) -> None:
-        self.root.update_idletasks()
+        width = max(1, int(round(width)))
+        height = max(1, int(round(height)))
         left, top, right, bottom = self._logical_work_area()
         screen_w = right - left
         x = left + int((screen_w - width) / 2)
         y = bottom - height - self.bottom_margin
         self.current_width = width
         self.current_height = height
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.minsize(width, height)
-        self.canvas.place(x=0, y=0, width=width, height=height)
-        self.root.update_idletasks()
-        self._apply_pill_region(width, height)
+        geometry = f"{width}x{height}+{x}+{y}"
+        if geometry != self._last_geometry:
+            self.root.geometry(geometry)
+            self.root.minsize(width, height)
+            self.canvas.place(x=0, y=0, width=width, height=height)
+            self.root.update_idletasks()
+            self._apply_pill_region(width, height)
+            self._last_geometry = geometry
         self._draw_visual()
 
     def _apply_pill_region(self, width: int, height: int) -> None:
@@ -795,7 +800,7 @@ class Overlay:
             self._apply_geometry(target_width, target_height)
             return
 
-        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 22), 18, 36))
+        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 12), 6, 16))
         self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, steps)
 
     def _animate_resize(
@@ -808,15 +813,16 @@ class Overlay:
         total_steps: int,
     ) -> None:
         progress = min(1.0, (step + 1) / max(1, total_steps))
-        eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10)
+        eased = 1 - pow(1 - progress, 4)
         width = int(start_width + (target_width - start_width) * eased)
         height = int(start_height + (target_height - start_height) * eased)
         self._apply_geometry(width, height)
         if progress >= 1.0:
+            self._apply_geometry(target_width, target_height)
             self.resize_after_id = None
             return
         self.resize_after_id = self.root.after(
-            max(8, self.resize_frame_ms),
+            max(4, self.resize_frame_ms),
             lambda: self._animate_resize(start_width, start_height, target_width, target_height, step + 1, total_steps),
         )
 
@@ -1098,7 +1104,7 @@ class Overlay:
             self.last_status = message[:160]
         if preview is not None:
             self.last_preview = preview[:240]
-        self._set_compact(state == "idle", animate=True)
+        self._set_compact(state not in LIVE_STATES, animate=True)
         self._schedule_idle_return(state)
         self._repaint()
         self._sync_fullscreen_visibility()
@@ -3338,7 +3344,7 @@ class Overlay:
         active_frame_var = string_var(overlay_config.get("active_frame_ms", 16))
         idle_frame_var = string_var(overlay_config.get("idle_frame_ms", 33))
         resize_frame_var = string_var(overlay_config.get("resize_frame_ms", 6))
-        resize_steps_var = string_var(overlay_config.get("resize_steps", 22))
+        resize_steps_var = string_var(overlay_config.get("resize_steps", 12))
         active_loop_var = string_var(overlay_config.get("active_loop_seconds", 3.84))
         idle_loop_var = string_var(overlay_config.get("idle_loop_seconds", 8.0))
         result_hold_var = string_var(overlay_config.get("result_hold_ms", 900))
@@ -3615,7 +3621,7 @@ class Overlay:
             overlay_config["active_frame_ms"] = parse_int(active_frame_var, 16, 8, 200)
             overlay_config["idle_frame_ms"] = parse_int(idle_frame_var, 33, 8, 500)
             overlay_config["resize_frame_ms"] = parse_int(resize_frame_var, 6, 4, 120)
-            overlay_config["resize_steps"] = parse_int(resize_steps_var, 22, 18, 36)
+            overlay_config["resize_steps"] = parse_int(resize_steps_var, 12, 6, 24)
             overlay_config["active_loop_seconds"] = parse_float(active_loop_var, 3.84, 0.10, 20.0)
             overlay_config["idle_loop_seconds"] = parse_float(idle_loop_var, 8.0, 0.10, 60.0)
             overlay_config["result_hold_ms"] = parse_int(result_hold_var, 900, 0, 30000)
