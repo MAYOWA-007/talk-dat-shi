@@ -494,6 +494,7 @@ class Overlay:
         self.idle_render_cache: dict[tuple[int, ...], Image.Image] = {}
         self.idle_photo_cache: dict[tuple[int, ...], ImageTk.PhotoImage] = {}
         self.hover_halo_cache: dict[tuple[int, int, int, int], Image.Image] = {}
+        self.pill_lift_cache: dict[tuple[int, int, int, int, int, int, int], Image.Image] = {}
         self.last_flow_render_key: tuple[int, int] | None = None
         self.last_animation_tick = time.perf_counter()
         self.utility_drag_origin: tuple[int, int, int, int] | None = None
@@ -1598,13 +1599,24 @@ class Overlay:
         glass = glass.filter(ImageFilter.GaussianBlur(radius=1.0 if active else 0.8))
         field = Image.alpha_composite(field, glass)
 
-        mask = self._compact_mask(width, height)
+        body_x, body_y, body_width, body_height = self._pill_body_box(width, height)
+        if (body_width, body_height) != field.size:
+            field = field.resize((body_width, body_height), Image.Resampling.LANCZOS)
+        mask = self._compact_mask(body_width, body_height)
         keyed = Image.new("RGBA", (width, height), (*self._rgb(TRANSPARENT_COLOR), 255))
+        lift = self._pill_lift_layer(width, height, body_x, body_y, body_width, body_height, active=active)
+        keyed = Image.alpha_composite(keyed, lift)
         hover_halo = self._hover_halo(width, height, active=active)
         if hover_halo is not None:
             keyed = Image.alpha_composite(keyed, hover_halo)
-        keyed.paste(field, (0, 0), mask)
+        keyed.paste(field, (body_x, body_y), mask)
         return keyed.convert("RGB")
+
+    def _pill_body_box(self, width: int, height: int) -> tuple[int, int, int, int]:
+        inset = max(2, min(3, int(round(height * 0.052))))
+        body_width = max(1, width - inset * 2)
+        body_height = max(1, height - inset * 2)
+        return inset, inset, body_width, body_height
 
     def _hover_halo(self, width: int, height: int, *, active: bool = False) -> Image.Image | None:
         hover = self._clamp(self.hover_level, 0.0, 1.0)
@@ -1726,14 +1738,100 @@ class Overlay:
         full.paste(body.convert("RGB"), (body_x, body_y), body_mask)
         return full
 
+    def _pill_lift_layer(
+        self,
+        width: int,
+        height: int,
+        body_x: int,
+        body_y: int,
+        body_width: int,
+        body_height: int,
+        *,
+        active: bool = False,
+    ) -> Image.Image:
+        key = (width, height, body_x, body_y, body_width, body_height, 1 if active else 0)
+        cached = self.pill_lift_cache.get(key)
+        if cached is not None:
+            return cached
+
+        scale = 4
+        scaled_w = max(2, width * scale)
+        scaled_h = max(2, height * scale)
+        sx = body_x * scale
+        sy = body_y * scale
+        sw = max(1, body_width * scale)
+        sh = max(1, body_height * scale)
+        radius = max(1, sh // 2)
+
+        mask = Image.new("L", (scaled_w, scaled_h), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle((sx, sy, sx + sw - 1, sy + sh - 1), radius=radius, fill=255)
+
+        layer = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+
+        contact_mask = Image.new("L", (scaled_w, scaled_h), 0)
+        contact_mask.paste(mask, (0, max(1, int(1.35 * scale))))
+        contact_mask = contact_mask.filter(ImageFilter.GaussianBlur(radius=max(2.2 * scale, sh * 0.075)))
+        contact_mask = contact_mask.point(lambda value: int(value * (0.30 if active else 0.24)))
+        layer.paste(Image.new("RGBA", (scaled_w, scaled_h), (0, 5, 8, 255)), (0, 0), contact_mask)
+
+        ambient_mask = mask.filter(ImageFilter.GaussianBlur(radius=max(1.4 * scale, sh * 0.045)))
+        ambient_mask = ImageChops.subtract(ambient_mask, mask.point(lambda value: int(value * 0.54)))
+        ambient_mask = ambient_mask.point(lambda value: int(value * (0.42 if active else 0.34)))
+        ambient = Image.new("RGBA", (scaled_w, scaled_h), (0, 0, 0, 0))
+        ambient_draw = ImageDraw.Draw(ambient)
+        phase = 0.0
+        ruby = (255, 62, 80)
+        gold = (255, 220, 122)
+        teal = (28, 225, 196)
+        blue = (72, 154, 255)
+        for x_index in range(scaled_w):
+            t = (x_index / max(1, scaled_w - 1) + phase) % 1.0
+            if t < 0.28:
+                color = self._mix_rgb(ruby, gold, t / 0.28)
+            elif t < 0.62:
+                color = self._mix_rgb(gold, teal, (t - 0.28) / 0.34)
+            else:
+                color = self._mix_rgb(teal, blue, (t - 0.62) / 0.38)
+            ambient_draw.line((x_index, 0, x_index, scaled_h), fill=(*color, 255))
+        layer.paste(ambient, (0, 0), ambient_mask)
+
+        rim_outer = mask.filter(ImageFilter.MaxFilter(max(3, int(1.15 * scale) * 2 + 1)))
+        rim_inner = mask.filter(ImageFilter.MinFilter(max(3, int(0.75 * scale) * 2 + 1)))
+        rim_mask = ImageChops.subtract(rim_outer, rim_inner)
+        rim_mask = rim_mask.filter(ImageFilter.GaussianBlur(radius=max(0.55 * scale, 1.0)))
+        rim_mask = rim_mask.point(lambda value: int(value * (0.24 if active else 0.18)))
+        layer.paste(Image.new("RGBA", (scaled_w, scaled_h), (255, 235, 178, 255)), (0, 0), rim_mask)
+
+        top_highlight = Image.new("L", (scaled_w, scaled_h), 0)
+        top_draw = ImageDraw.Draw(top_highlight)
+        top_draw.rounded_rectangle(
+            (sx + int(1.4 * scale), sy + int(0.9 * scale), sx + sw - int(1.4 * scale), sy + int(5.2 * scale)),
+            radius=max(1, int(4 * scale)),
+            fill=62 if active else 44,
+        )
+        top_highlight = top_highlight.filter(ImageFilter.GaussianBlur(radius=max(1.2 * scale, sh * 0.025)))
+        layer.paste(Image.new("RGBA", (scaled_w, scaled_h), (255, 248, 207, 255)), (0, 0), top_highlight)
+
+        if layer.size != (width, height):
+            layer = layer.resize((width, height), Image.Resampling.LANCZOS)
+        if len(self.pill_lift_cache) > 80:
+            self.pill_lift_cache.clear()
+        self.pill_lift_cache[key] = layer
+        return layer
+
     def _compact_mask(self, width: int, height: int) -> Image.Image:
         key = (width, height)
         mask = self.compact_mask_cache.get(key)
         if mask is not None:
             return mask
-        mask = Image.new("L", (width, height), 0)
+        scale = 4
+        scaled_w = max(2, width * scale)
+        scaled_h = max(2, height * scale)
+        mask = Image.new("L", (scaled_w, scaled_h), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=max(1, height // 2), fill=255)
+        mask_draw.rounded_rectangle((0, 0, scaled_w - 1, scaled_h - 1), radius=max(1, scaled_h // 2), fill=255)
+        mask = mask.resize((width, height), Image.Resampling.LANCZOS)
         self.compact_mask_cache[key] = mask
         return mask
 
