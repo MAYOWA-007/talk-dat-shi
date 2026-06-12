@@ -22,6 +22,7 @@ class STTProvider:
     env_key: str
     docs_url: str
     key_label: str = "API key"
+    key_optional: bool = False
     supports_streaming: bool = False
     supports_batch: bool = True
     models: tuple[STTModel, ...] = field(default_factory=tuple)
@@ -40,21 +41,22 @@ PROVIDERS: tuple[STTProvider, ...] = (
         supports_batch=True,
         api_base="https://api.deepgram.com",
         models=(
-            STTModel("nova-3", "Nova-3", "streaming"),
-            STTModel("nova-3-general", "Nova-3 General", "streaming"),
-            STTModel("nova-3-medical", "Nova-3 Medical", "streaming"),
-            STTModel("nova-2", "Nova-2", "streaming"),
-            STTModel("nova-2-general", "Nova-2 General", "streaming"),
-            STTModel("nova-2-meeting", "Nova-2 Meeting", "streaming"),
-            STTModel("nova-2-phonecall", "Nova-2 Phone Call", "streaming"),
-            STTModel("nova-2-finance", "Nova-2 Finance", "streaming"),
-            STTModel("nova-2-conversationalai", "Nova-2 Conversational AI", "streaming"),
-            STTModel("nova-2-voicemail", "Nova-2 Voicemail", "streaming"),
-            STTModel("nova-2-video", "Nova-2 Video", "streaming"),
-            STTModel("enhanced", "Enhanced", "streaming"),
-            STTModel("base", "Base", "streaming"),
+            STTModel("nova-3", "Nova-3", "streaming", ("streaming",)),
+            STTModel("nova-3-general", "Nova-3 General", "streaming", ("streaming",)),
+            STTModel("nova-3-medical", "Nova-3 Medical", "streaming", ("streaming",)),
+            STTModel("nova-2", "Nova-2", "streaming", ("streaming",)),
+            STTModel("nova-2-general", "Nova-2 General", "streaming", ("streaming",)),
+            STTModel("nova-2-meeting", "Nova-2 Meeting", "streaming", ("streaming",)),
+            STTModel("nova-2-phonecall", "Nova-2 Phone Call", "streaming", ("streaming",)),
+            STTModel("nova-2-finance", "Nova-2 Finance", "streaming", ("streaming",)),
+            STTModel("nova-2-conversationalai", "Nova-2 Conversational AI", "streaming", ("streaming",)),
+            STTModel("nova-2-voicemail", "Nova-2 Voicemail", "streaming", ("streaming",)),
+            STTModel("nova-2-video", "Nova-2 Video", "streaming", ("streaming",)),
+            STTModel("enhanced", "Enhanced", "streaming", ("streaming",)),
+            STTModel("base", "Base", "streaming", ("streaming",)),
             STTModel("whisper", "Whisper", "batch"),
         ),
+        notes="Flux (flux-general-en) needs the /v2/listen protocol and is not wired yet.",
     ),
     STTProvider(
         id="openai",
@@ -80,20 +82,26 @@ PROVIDERS: tuple[STTProvider, ...] = (
         api_base="https://api.elevenlabs.io",
         models=(
             STTModel("scribe_v2", "Scribe v2", "batch", ("default", "diarize", "tag-audio-events")),
-            STTModel("scribe_v1", "Scribe v1", "batch", ("default", "diarize", "tag-audio-events")),
+            STTModel(
+                "scribe_v1",
+                "Scribe v1 (deprecated)",
+                "batch",
+                ("default", "diarize", "tag-audio-events"),
+                notes="ElevenLabs removes scribe_v1 on 2026-07-09. Use Scribe v2.",
+            ),
         ),
     ),
     STTProvider(
         id="xai",
         label="xAI",
-        api_kind="openai_batch",
+        api_kind="external",
         env_key="XAI_API_KEY",
-        docs_url="https://docs.x.ai/docs/guides/speech-to-text",
+        docs_url="https://docs.x.ai/developers/model-capabilities/audio/speech-to-text",
         api_base="https://api.x.ai",
         models=(
-            STTModel("grok-speech-to-text", "Grok Speech to Text", "batch", ("json", "text")),
-            STTModel("grok-speech-to-text-v2", "Grok Speech to Text v2", "batch", ("json", "text")),
+            STTModel("grok-transcribe", "Grok STT", "batch", ("default", "diarize")),
         ),
+        notes="xAI STT uses POST /v1/stt (multipart), not the OpenAI-compatible audio endpoint. Adapter pending.",
     ),
     STTProvider(
         id="groq",
@@ -105,7 +113,6 @@ PROVIDERS: tuple[STTProvider, ...] = (
         models=(
             STTModel("whisper-large-v3", "Whisper Large v3", "batch", ("json", "verbose_json")),
             STTModel("whisper-large-v3-turbo", "Whisper Large v3 Turbo", "batch", ("json", "verbose_json")),
-            STTModel("distil-whisper-large-v3-en", "Distil Whisper Large v3 EN", "batch", ("json", "verbose_json")),
         ),
     ),
     STTProvider(
@@ -116,11 +123,15 @@ PROVIDERS: tuple[STTProvider, ...] = (
         docs_url="https://docs.mistral.ai/capabilities/audio/",
         api_base="https://api.mistral.ai",
         models=(
-            STTModel("voxtral-mini-transcribe-latest", "Voxtral Mini Transcribe", "batch", ("json", "text")),
-            STTModel("voxtral-small-transcribe-latest", "Voxtral Small Transcribe", "batch", ("json", "text")),
-            STTModel("voxtral-mini-transcribe-2", "Voxtral Mini Transcribe 2", "batch", ("json", "text")),
-            STTModel("voxtral-mini-latest", "Voxtral Mini Transcribe", "batch", ("json", "text")),
-            STTModel("voxtral-small-latest", "Voxtral Small Transcribe", "batch", ("json", "text")),
+            STTModel("voxtral-mini-2602", "Voxtral Mini Transcribe 2", "batch", ("json", "text")),
+            STTModel("voxtral-mini-latest", "Voxtral Mini (latest)", "batch", ("json", "text")),
+            STTModel(
+                "voxtral-small-latest",
+                "Voxtral Small",
+                "batch",
+                ("json", "text"),
+                notes="Audio-understanding model; transcription capped around 15 minutes.",
+            ),
         ),
     ),
     STTProvider(
@@ -133,10 +144,9 @@ PROVIDERS: tuple[STTProvider, ...] = (
         supports_batch=True,
         api_base="https://api.assemblyai.com",
         models=(
-            STTModel("universal", "Universal", "batch", ("default", "speaker-labels")),
-            STTModel("universal-2", "Universal-2", "batch", ("default", "speaker-labels")),
-            STTModel("universal-3", "Universal-3", "batch", ("default", "speaker-labels")),
             STTModel("universal-3-pro", "Universal-3 Pro", "batch", ("default", "speaker-labels")),
+            STTModel("universal-2", "Universal-2", "batch", ("default", "speaker-labels")),
+            STTModel("universal", "Universal", "batch", ("default", "speaker-labels")),
         ),
     ),
     STTProvider(
@@ -147,11 +157,24 @@ PROVIDERS: tuple[STTProvider, ...] = (
         docs_url="https://ai.google.dev/gemini-api/docs/audio",
         api_base="https://generativelanguage.googleapis.com",
         models=(
-            STTModel("gemini-2.5-pro", "Gemini 2.5 Pro", "batch", ("default", "low-latency", "high-accuracy")),
-            STTModel("gemini-2.5-flash", "Gemini 2.5 Flash", "batch", ("default", "low-latency")),
-            STTModel("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", "batch", ("default", "low-latency")),
-            STTModel("gemini-2.0-flash", "Gemini 2.0 Flash", "batch", ("default",)),
+            STTModel("gemini-3.5-flash", "Gemini 3.5 Flash", "batch", ("default", "low-latency")),
+            STTModel("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "batch", ("default", "low-latency")),
+            STTModel(
+                "gemini-2.5-pro",
+                "Gemini 2.5 Pro (deprecated)",
+                "batch",
+                ("default", "high-accuracy"),
+                notes="Gemini 2.5 family is deprecated; migrate to 3.x.",
+            ),
+            STTModel(
+                "gemini-2.5-flash",
+                "Gemini 2.5 Flash (deprecated)",
+                "batch",
+                ("default", "low-latency"),
+                notes="Gemini 2.5 family is deprecated; migrate to 3.x.",
+            ),
         ),
+        notes="Gemini 2.0 Flash was shut down on 2026-06-01 and no longer transcribes.",
     ),
     STTProvider(
         id="google_cloud",
@@ -181,9 +204,10 @@ PROVIDERS: tuple[STTProvider, ...] = (
         supports_batch=True,
         models=(
             STTModel("latest", "Speech to Text", "streaming", ("region-required", "custom-endpoint")),
-            STTModel("mai-transcribe", "MAI Transcribe", "batch", ("preview",)),
+            STTModel("mai-transcribe-1.5", "MAI Transcribe 1.5", "batch", ("preview",)),
+            STTModel("mai-transcribe-1", "MAI Transcribe 1", "batch", ("preview",)),
         ),
-        notes="Requires Azure region and usually SDK/service setup.",
+        notes="Requires Azure region and usually SDK/service setup. MAI Transcribe runs via the LLM Speech API preview.",
     ),
     STTProvider(
         id="aws",
@@ -196,9 +220,8 @@ PROVIDERS: tuple[STTProvider, ...] = (
         supports_batch=True,
         models=(
             STTModel("transcribe", "Amazon Transcribe", "streaming", ("standard", "medical", "call-analytics")),
-            STTModel("transcribe-pro-v2", "Amazon Transcribe Pro v2", "batch", ("preview",)),
         ),
-        notes="Requires AWS signed requests and region/secret configuration.",
+        notes="Job-based service without public model IDs. Requires AWS signed requests and region/secret configuration.",
     ),
     STTProvider(
         id="speechmatics",
@@ -218,8 +241,18 @@ PROVIDERS: tuple[STTProvider, ...] = (
         label="Cohere",
         api_kind="external",
         env_key="COHERE_API_KEY",
-        docs_url="https://docs.cohere.com/",
-        models=(STTModel("transcribe", "Cohere Transcribe", "batch", ("default",)),),
+        docs_url="https://docs.cohere.com/v2/docs/transcribe",
+        api_base="https://api.cohere.com",
+        models=(
+            STTModel(
+                "cohere-transcribe-03-2026",
+                "Cohere Transcribe",
+                "batch",
+                ("default",),
+                open_weights=True,
+            ),
+        ),
+        notes="Uses POST /v2/audio/transcriptions (not OpenAI-compatible). Adapter pending.",
     ),
     STTProvider(
         id="gladia",
@@ -229,7 +262,10 @@ PROVIDERS: tuple[STTProvider, ...] = (
         docs_url="https://docs.gladia.io/",
         supports_streaming=True,
         supports_batch=True,
-        models=(STTModel("solaria-1", "Solaria 1", "batch", ("default",)),),
+        models=(
+            STTModel("solaria-1", "Solaria 1", "batch", ("default",)),
+            STTModel("solaria-3", "Solaria 3", "batch", ("default",), notes="Async only. EN/FR/DE/ES/IT."),
+        ),
     ),
     STTProvider(
         id="rev_ai",
@@ -251,6 +287,7 @@ PROVIDERS: tuple[STTProvider, ...] = (
         supports_batch=True,
         models=(
             STTModel("parakeet-tdt-0.6b-v3", "Parakeet TDT 0.6B v3", "batch", ("default",), open_weights=True),
+            STTModel("canary-1b-v2", "Canary 1B v2", "batch", ("default",), open_weights=True),
             STTModel("canary-qwen-2.5b", "Canary Qwen 2.5B", "batch", ("default",), open_weights=True),
         ),
         notes="Usually runs via Riva/NIM or another NVIDIA-hosted endpoint.",
@@ -260,10 +297,10 @@ PROVIDERS: tuple[STTProvider, ...] = (
         label="Alibaba",
         api_kind="external",
         env_key="DASHSCOPE_API_KEY",
-        docs_url="https://www.alibabacloud.com/help/en/model-studio/",
+        docs_url="https://www.alibabacloud.com/help/en/model-studio/qwen-asr-api-reference",
         models=(
-            STTModel("qwen3-omni", "Qwen3-Omni", "batch", ("default",)),
             STTModel("qwen3-asr-flash", "Qwen3-ASR Flash", "batch", ("default",)),
+            STTModel("qwen3-omni-flash", "Qwen3-Omni Flash", "batch", ("default",)),
         ),
     ),
     STTProvider(
@@ -273,6 +310,7 @@ PROVIDERS: tuple[STTProvider, ...] = (
         env_key="CUSTOM_STT_API_KEY",
         docs_url="",
         key_label="Custom API key",
+        key_optional=True,
         api_base="",
         supports_batch=True,
         models=(STTModel("custom-model", "custom-model", "batch", ("json", "text")),),
@@ -285,6 +323,7 @@ PROVIDERS: tuple[STTProvider, ...] = (
         env_key="",
         docs_url="https://huggingface.co/models?pipeline_tag=automatic-speech-recognition",
         key_label="Local endpoint",
+        key_optional=True,
         supports_streaming=False,
         supports_batch=True,
         models=(

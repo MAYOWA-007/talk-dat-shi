@@ -8,6 +8,17 @@ Talk Dat! now separates speech-to-text selection into a provider registry and ru
 - `batch`: microphone audio is recorded locally first, then sent after the user releases or stops the session. This keeps hover/idle credit-safe and supports leaderboard models that do not expose a realtime API.
 - `external`: the model is visible in Settings for planning and public customization, but needs a dedicated adapter, signed cloud auth flow, SDK, or local runner before it can execute.
 
+## Routing
+
+Session routing is driven entirely by the registry's `api_kind` field, so adding a provider that reuses an existing protocol needs only a registry entry:
+
+- `deepgram_stream` routes to the Deepgram live WebSocket session.
+- `openai_batch` routes to the OpenAI-compatible `POST /v1/audio/transcriptions` adapter (OpenAI, Groq, xAI, Mistral, custom endpoints).
+- `elevenlabs_batch`, `assemblyai_batch`, and `gemini_batch` route to their dedicated batch adapters.
+- `external` raises a clear "adapter pending" error instead of failing mid-session.
+
+Providers with `key_optional` set (custom OpenAI-compatible endpoints and local runners) skip the API key requirement. Batch HTTP requests retry transient failures (HTTP 408/429/5xx and network errors) with short exponential backoff before surfacing an error.
+
 ## Wired Adapters
 
 - Deepgram live streaming: `deepgram_stream`
@@ -18,22 +29,24 @@ Talk Dat! now separates speech-to-text selection into a provider registry and ru
 
 ## Registered Provider Families
 
-- Deepgram: Nova, Enhanced, Base, Whisper
-- OpenAI: GPT-4o Transcribe, GPT-4o Mini Transcribe, Whisper-1
-- ElevenLabs: Scribe v2, Scribe v1
-- xAI: Grok speech-to-text models
-- Groq: Whisper Large v3 family
-- Mistral: Voxtral Mini and Voxtral Small
-- AssemblyAI: Universal family
-- Google Gemini and Google Cloud Speech
-- Microsoft Azure Speech
-- Amazon Transcribe
+Verified against official provider docs on 2026-06-12.
+
+- Deepgram: Nova-3 / Nova-2, Enhanced, Base, Whisper (Flux exists but needs the `/v2/listen` protocol)
+- OpenAI: GPT-4o Transcribe, GPT-4o Mini Transcribe, GPT-4o Transcribe Diarize, Whisper-1
+- ElevenLabs: Scribe v2 (Scribe v1 is removed 2026-07-09)
+- xAI: Grok STT (`/v1/stt`, adapter pending)
+- Groq: Whisper Large v3 and v3 Turbo
+- Mistral: Voxtral Mini Transcribe 2 (`voxtral-mini-2602`) and Voxtral Small
+- AssemblyAI: Universal-3 Pro, Universal-2, Universal
+- Google Gemini (3.5 Flash, 3.1 Flash-Lite, deprecated 2.5 family) and Google Cloud Speech
+- Microsoft Azure Speech, including MAI Transcribe 1 / 1.5 preview
+- Amazon Transcribe (job-based, no public model IDs)
 - Speechmatics
-- Cohere
-- Gladia
+- Cohere Transcribe (`cohere-transcribe-03-2026`, open weights)
+- Gladia: Solaria 1 and Solaria 3
 - Rev AI
-- NVIDIA open-weight ASR families
-- Alibaba Qwen speech models
+- NVIDIA open-weight ASR: Parakeet TDT 0.6B v3, Canary 1B v2, Canary Qwen 2.5B
+- Alibaba Qwen3-ASR Flash and Qwen3-Omni Flash
 - Custom OpenAI-compatible and local/open-weight runners
 
 ## Source Anchors

@@ -11,6 +11,7 @@ from urllib.parse import quote_plus
 
 from .chimes import play_chime
 from .config import config_path, full_history_path, history_path, live_draft_path, load_config, save_config
+from .history import create_history_store, history_backend
 from .hotkeys import HotkeyController
 from .logger import configure_logging
 from .overlay import Overlay
@@ -582,6 +583,7 @@ class TalkDatApp:
             "mute_output_while_recording": bool(self.config.get("dictation", {}).get("mute_output_while_recording", True)),
             "hide_over_fullscreen_media": bool(self.config.get("overlay", {}).get("hide_over_fullscreen_media", True)),
             "save_history": bool(self.config.get("privacy", {}).get("save_history", True)),
+            "history_backend": history_backend(self.config),
             "config_path": str(config_path()),
             "history_path": str(history_path()),
             "live_draft_path": str(live_draft_path()),
@@ -625,12 +627,12 @@ class TalkDatApp:
 
     def add_history(self, entry: dict[str, Any]) -> None:
         try:
-            path = history_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as file:
-                file.write(json.dumps(entry, ensure_ascii=True) + "\n")
+            store = create_history_store(self.config)
+            store.append(entry)
             self.append_full_history(entry)
-            self.trim_history(path)
+            limit = int(self.config.get("privacy", {}).get("history_limit", 0))
+            if limit > 0:
+                store.trim(limit)
         except OSError:
             pass
 
@@ -668,34 +670,11 @@ class TalkDatApp:
             pass
 
 
-    def trim_history(self, path: Path) -> None:
-        limit = int(self.config.get("privacy", {}).get("history_limit", 500))
-        if limit <= 0:
-            return
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-            if len(lines) > limit:
-                path.write_text("\n".join(lines[-limit:]) + "\n", encoding="utf-8")
-        except OSError:
-            pass
-
     def read_last_history_text(self) -> str:
-        path = history_path()
-        if not path.exists():
-            return ""
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            return create_history_store(self.config).last_text()
         except OSError:
             return ""
-        for line in reversed(lines):
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            text = str(item.get("text", "")).strip()
-            if text:
-                return text
-        return ""
 
     def is_current(self, token: object) -> bool:
         with self.lock:

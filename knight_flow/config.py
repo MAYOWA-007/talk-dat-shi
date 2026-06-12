@@ -38,11 +38,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "deepgram": {"api_key": "", "model": "nova-3", "variant": "streaming", "extra": {}},
             "openai": {"api_key": "", "model": "gpt-4o-transcribe", "variant": "json", "extra": {}},
             "elevenlabs": {"api_key": "", "model": "scribe_v2", "variant": "default", "extra": {}},
-            "xai": {"api_key": "", "model": "grok-speech-to-text", "variant": "json", "extra": {}},
+            "xai": {"api_key": "", "model": "grok-transcribe", "variant": "default", "extra": {}},
             "groq": {"api_key": "", "model": "whisper-large-v3", "variant": "json", "extra": {}},
-            "mistral": {"api_key": "", "model": "voxtral-mini-transcribe-latest", "variant": "json", "extra": {}},
+            "mistral": {"api_key": "", "model": "voxtral-mini-2602", "variant": "json", "extra": {}},
             "assemblyai": {"api_key": "", "model": "universal-3-pro", "variant": "default", "extra": {}},
-            "google_gemini": {"api_key": "", "model": "gemini-2.5-pro", "variant": "default", "extra": {}},
+            "google_gemini": {"api_key": "", "model": "gemini-3.5-flash", "variant": "default", "extra": {}},
             "custom_openai": {"api_key": "", "api_base": "", "model": "custom-model", "variant": "json", "extra": {}},
         },
     },
@@ -138,6 +138,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "save_audio": False,
         "save_history": True,
         "history_limit": 0,
+        "history_backend": "jsonl",
     },
     "ui": {
         "theme": "dark",
@@ -217,6 +218,10 @@ def config_path() -> Path:
 
 def history_path() -> Path:
     return app_dir() / "history.jsonl"
+
+
+def history_db_path() -> Path:
+    return app_dir() / "history.db"
 
 
 def full_history_path() -> Path:

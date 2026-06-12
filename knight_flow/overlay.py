@@ -15,7 +15,16 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
-from .config import config_path, full_history_path, history_path, live_draft_path, scratchpad_path, scratchpad_tabs_path
+from .config import (
+    config_path,
+    full_history_path,
+    history_db_path,
+    history_path,
+    live_draft_path,
+    scratchpad_path,
+    scratchpad_tabs_path,
+)
+from .history import HISTORY_BACKENDS, clear_all_history, create_history_store, history_backend
 from .icon import ensure_icon_file
 from .stt_registry import (
     PROVIDER_BY_ID,
@@ -3442,15 +3451,26 @@ class Overlay:
         transforms_tab.rowconfigure(5, weight=1)
 
         history_limit_var = string_var(privacy.get("history_limit", 0))
+        history_backend_var = tk.StringVar(value=history_backend(self.config))
         add_row(privacy_tab, 0, "History limit", entry(privacy_tab, history_limit_var, 12))
+        add_row(privacy_tab, 1, "History storage", combo(privacy_tab, history_backend_var, list(HISTORY_BACKENDS), 14))
+        ttk.Label(
+            privacy_tab,
+            text="jsonl keeps history in a plain text file. sqlite keeps it in a local searchable database.",
+            wraplength=880,
+            style="Flow.Muted.TLabel",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=6)
         ttk.Label(privacy_tab, text=f"History: {history_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=6
+            row=3, column=0, columnspan=2, sticky="w", pady=6
+        )
+        ttk.Label(privacy_tab, text=f"History database: {history_db_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=6
         )
         ttk.Label(privacy_tab, text=f"Full history: {full_history_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=6
+            row=5, column=0, columnspan=2, sticky="w", pady=6
         )
         ttk.Label(privacy_tab, text=f"Live draft: {live_draft_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=6
+            row=6, column=0, columnspan=2, sticky="w", pady=6
         )
 
         button_row = tk.Frame(window, bg=palette["bg"])
@@ -3589,6 +3609,8 @@ class Overlay:
             cleanup["level"] = level_var.get().strip().lower() or "high"
             privacy["save_history"] = bool(save_history_var.get())
             privacy["history_limit"] = parse_int(history_limit_var, 0, 0, 100000)
+            backend_choice = history_backend_var.get().strip().lower()
+            privacy["history_backend"] = backend_choice if backend_choice in HISTORY_BACKENDS else "jsonl"
             dictation_config["play_sounds"] = bool(play_sounds_var.get())
             dictation_config["auto_paste"] = bool(auto_paste_var.get())
             dictation_config["smart_leading_space"] = bool(smart_space_var.get())
@@ -3827,7 +3849,11 @@ class Overlay:
                 copy_value(str(path))
 
         def clear_history() -> None:
-            for path in (history_path(), full_history_path(), live_draft_path()):
+            try:
+                clear_all_history()
+            except OSError:
+                pass
+            for path in (full_history_path(), live_draft_path()):
                 try:
                     if path.exists():
                         path.write_text("", encoding="utf-8")
@@ -3867,11 +3893,28 @@ class Overlay:
             if full_text:
                 sections.append("FULL HISTORY\n" + "=" * 72 + "\n" + full_text)
 
-        json_path = history_path()
-        if json_path.exists() and not full_text:
-            raw = json_path.read_text(encoding="utf-8", errors="replace").strip()
-            if raw:
-                sections.append("RAW JSON HISTORY\n" + "=" * 72 + "\n" + raw)
+        if not full_text:
+            try:
+                entries = create_history_store(self.config).recent(100)
+            except OSError:
+                entries = []
+            if entries:
+                blocks = []
+                for entry in entries:
+                    created = entry.get("created_at")
+                    stamp = (
+                        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(created)))
+                        if isinstance(created, (int, float))
+                        else ""
+                    )
+                    entry_type = str(entry.get("type", "entry")).replace("_", " ")
+                    lines = [f"{stamp} - {entry_type}".strip(" -")]
+                    for label, key in (("Command", "command"), ("Raw / original", "original"), ("Final / pasted", "text"), ("URL", "url")):
+                        value = str(entry.get(key, "")).strip()
+                        if value:
+                            lines.append(f"{label}: {value}")
+                    blocks.append("\n".join(lines))
+                sections.append("STORED HISTORY\n" + "=" * 72 + "\n" + "\n\n".join(blocks))
 
         if not sections:
             sections.append(

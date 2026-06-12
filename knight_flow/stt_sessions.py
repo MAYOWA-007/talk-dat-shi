@@ -82,7 +82,8 @@ class BatchSTTSession:
         return bool(self._thread and self._thread.is_alive() and not self._stop_event.is_set())
 
     def start(self) -> None:
-        if not self.api_key and self.provider_id not in {"local", "custom_openai"}:
+        provider = PROVIDER_BY_ID.get(self.provider_id)
+        if not self.api_key and not (provider and provider.key_optional):
             raise ValueError(f"{self.provider_id}_api_key_missing")
         if not self.model:
             raise ValueError(f"{self.provider_id}_model_missing")
@@ -183,24 +184,27 @@ class BatchSTTSession:
         return buffer.getvalue()
 
     def _transcribe(self, wav_bytes: bytes) -> str:
-        if self.provider_id in {"openai", "groq", "xai", "mistral", "custom_openai"}:
-            return self._transcribe_openai_compatible(wav_bytes)
-        if self.provider_id == "elevenlabs":
-            return self._transcribe_elevenlabs(wav_bytes)
-        if self.provider_id == "assemblyai":
-            return self._transcribe_assemblyai(wav_bytes)
-        if self.provider_id == "google_gemini":
-            return self._transcribe_gemini(wav_bytes)
-        raise NotImplementedError(f"{self.provider_id} is registered, but its live adapter is not wired yet.")
+        provider = PROVIDER_BY_ID.get(self.provider_id)
+        api_kind = provider.api_kind if provider else "openai_batch"
+        handlers: dict[str, Callable[[bytes], str]] = {
+            "openai_batch": self._transcribe_openai_compatible,
+            "elevenlabs_batch": self._transcribe_elevenlabs,
+            "assemblyai_batch": self._transcribe_assemblyai,
+            "gemini_batch": self._transcribe_gemini,
+        }
+        handler = handlers.get(api_kind)
+        if handler is None:
+            raise NotImplementedError(f"{self.provider_id} is registered, but its live adapter is not wired yet.")
+        return handler(wav_bytes)
 
     def _transcribe_openai_compatible(self, wav_bytes: bytes) -> str:
         base = self.api_base or "https://api.openai.com"
-        if base.endswith("/openai"):
-            url = base + "/v1/audio/transcriptions"
-        else:
-            url = base + "/v1/audio/transcriptions"
+        url = base + "/v1/audio/transcriptions"
         response_format = self.variant if self.variant in {"json", "text", "verbose_json", "diarized_json"} else "json"
         fields: dict[str, str] = {"model": self.model, "response_format": response_format}
+        if "diarize" in self.model:
+            # OpenAI's diarize transcription model rejects audio over 30s unless auto chunking is on.
+            fields.setdefault("chunking_strategy", "auto")
         if self.language:
             fields["language"] = self.language.split("-")[0]
         for key, value in self.extra.items():
@@ -362,7 +366,7 @@ def create_stt_session(
     model = selected_model_id(config, provider_id)
     variant = selected_variant(config, provider_id)
 
-    if provider_id == "deepgram" and provider.api_kind == "deepgram_stream":
+    if provider.api_kind == "deepgram_stream":
         params = deepgram_params(config)
         params["model"] = model
         return DeepgramLiveSession(
@@ -429,6 +433,9 @@ def multipart_form(fields: dict[str, str], files: dict[str, tuple[str, bytes, st
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
+RETRYABLE_HTTP_CODES = {408, 429, 500, 502, 503, 504}
+
+
 def http_request(
     url: str,
     *,
@@ -436,16 +443,26 @@ def http_request(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 90.0,
+    retries: int = 2,
 ) -> bytes:
-    request = Request(url, data=body, headers=headers or {}, method=method)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return response.read()
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:800]
-        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
-    except URLError as exc:
-        raise RuntimeError(str(exc.reason)) from exc
+    last_error: Exception | None = None
+    for attempt in range(max(1, retries + 1)):
+        if attempt:
+            time.sleep(min(8.0, 0.8 * (2 ** (attempt - 1))))
+        request = Request(url, data=body, headers=headers or {}, method=method)
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:800]
+            last_error = RuntimeError(f"HTTP {exc.code}: {detail}")
+            last_error.__cause__ = exc
+            if exc.code not in RETRYABLE_HTTP_CODES:
+                raise last_error
+        except URLError as exc:
+            last_error = RuntimeError(str(exc.reason))
+            last_error.__cause__ = exc
+    raise last_error if last_error else RuntimeError("request failed")
 
 
 def extract_text(data: Any) -> str:
@@ -457,6 +474,15 @@ def extract_text(data: Any) -> str:
         return str(data["text"])
     if isinstance(data.get("transcript"), str):
         return str(data["transcript"])
+    segments = data.get("segments")
+    if isinstance(segments, list):
+        texts = [
+            str(segment["text"]).strip()
+            for segment in segments
+            if isinstance(segment, dict) and isinstance(segment.get("text"), str)
+        ]
+        if texts:
+            return " ".join(text for text in texts if text)
     channel = data.get("channel")
     if isinstance(channel, dict):
         alternatives = channel.get("alternatives")

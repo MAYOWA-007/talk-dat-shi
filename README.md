@@ -23,7 +23,7 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Right-click overlay menu for Settings, History, and a tabbed local Scratchpad.
 - Glass settings UI with 10 named theme families, dark/light variants, and live theme preview.
 - Version tracking plus GitHub Release update checks and installer download from inside the app.
-- Local transcript history and live draft files.
+- Local transcript history and live draft files, with a choice of plain JSONL or a local searchable SQLite database.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
 - Provider framework with Deepgram streaming plus several batch transcription adapters.
 
@@ -129,10 +129,13 @@ Local files:
 ```text
 %APPDATA%\TalkDat\config.json
 %APPDATA%\TalkDat\history.jsonl
+%APPDATA%\TalkDat\history.db
 %APPDATA%\TalkDat\full-transcript-history.txt
 %APPDATA%\TalkDat\live-transcript-draft.txt
 %APPDATA%\TalkDat\scratchpad-tabs.json
 ```
+
+History storage defaults to the JSONL file. Settings > Privacy can switch it to a local SQLite database (`history.db`); existing JSONL entries are imported automatically the first time the database backend is used. Both stores stay on your machine.
 
 Do not commit these files.
 
