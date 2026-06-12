@@ -115,7 +115,7 @@ class TalkDatApp:
             return False
         provider_id = selected_provider_id(self.config)
         provider = PROVIDER_BY_ID[provider_id]
-        if provider.api_kind == "external":
+        if provider.api_kind == "external" or provider.key_optional:
             return False
         return not bool(selected_stt_api_key(self.config, provider_id))
 
@@ -160,7 +160,7 @@ class TalkDatApp:
             provider = PROVIDER_BY_ID[provider_id]
             model_id = selected_model_id(self.config, provider_id)
             api_key = selected_stt_api_key(self.config, provider_id)
-            if not api_key and provider.api_kind != "external":
+            if not api_key and provider.api_kind != "external" and not provider.key_optional:
                 log.error("missing STT API key for provider=%s", provider_id)
                 self.overlay.set_state(
                     "error",
@@ -271,6 +271,10 @@ class TalkDatApp:
             self.overlay.set_state("starting", "Connected. Opening microphone.")
         elif status == "transcribing":
             self.overlay.set_state("processing", "Transcribing audio.")
+        elif status == "downloading_model":
+            self.overlay.set_state("processing", "Downloading local model. One-time setup.")
+        elif status == "loading_model":
+            self.overlay.set_state("processing", "Loading local model.")
         elif status == "time_limit":
             self.overlay.set_state("processing", "Time limit reached. Finalizing.")
         elif status == "no_speech_timeout":

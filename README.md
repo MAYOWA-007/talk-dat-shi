@@ -4,7 +4,7 @@ Talk Dat! is a Windows-first local dictation overlay. It stays as a small always
 
 The visual system has two core pieces: **Talk Stone**, the matte black roman-clay app mark, and **The Pill**, the animated Flow dictation overlay.
 
-This is a bring-your-own-key project. The repository does not include API keys, private config, transcript history, or built binaries.
+Cloud providers are bring-your-own-key. The Local / On-Device brand needs no key at all: open-weight models download once and transcribe entirely on your PC. The repository does not include API keys, private config, transcript history, model weights, or built binaries.
 
 > Talk Dat! is an independent project and is not affiliated with Wispr, Wispr Flow, Deepgram, OpenAI, ElevenLabs, AssemblyAI, Google, or any other provider.
 
@@ -18,14 +18,15 @@ This is a bring-your-own-key project. The repository does not include API keys, 
 - Animated bottom overlay that is idle until activated.
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
 - Optional speaker-output mute while recording, with automatic restore on release/cancel/timeout.
-- Fullscreen media/game guard hides the idle pill until you trigger dictation.
+- Fullscreen media/game guard keeps the pill hidden over fullscreen apps. Dictation and pasting keep working while hidden, so push-to-talk never disturbs a game or video; an option can show the pill instead.
+- Fully local on-device dictation: 18 downloadable open-weight models (NVIDIA Parakeet and Canary, Whisper, Distil-Whisper, GigaAM) with an in-app downloader. Parakeet TDT 0.6B v3 is the recommended default, the same pick as Handy.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
 - Right-click overlay menu for Settings, History, and a tabbed local Scratchpad.
 - Glass settings UI with 10 named theme families, dark/light variants, and live theme preview.
 - Version tracking plus GitHub Release update checks and installer download from inside the app.
 - Local transcript history and live draft files, with a choice of plain JSONL or a local searchable SQLite database.
 - Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
-- Provider framework with Deepgram streaming plus several batch transcription adapters.
+- Provider framework with Deepgram streaming, several cloud batch adapters, and a local on-device engine lane.
 
 ## Install
 
@@ -98,6 +99,7 @@ See [docs/PROVIDERS.md](docs/PROVIDERS.md). Current wired adapters include:
 - ElevenLabs batch transcription
 - AssemblyAI batch transcription
 - Google Gemini batch transcription
+- Local / On-Device batch transcription (onnx-asr and faster-whisper engines, no API key)
 
 Other providers appear in the settings framework for planning and configuration, but still need dedicated adapters before they can transcribe inside the app.
 
@@ -133,7 +135,10 @@ Local files:
 %APPDATA%\TalkDat\full-transcript-history.txt
 %APPDATA%\TalkDat\live-transcript-draft.txt
 %APPDATA%\TalkDat\scratchpad-tabs.json
+%APPDATA%\TalkDat\models\
 ```
+
+Downloaded local model weights live under `models\` and can be removed from Settings > Providers > Local models.
 
 History storage defaults to the JSONL file. Settings > Privacy can switch it to a local SQLite database (`history.db`); existing JSONL entries are imported automatically the first time the database backend is used. Both stores stay on your machine.
 

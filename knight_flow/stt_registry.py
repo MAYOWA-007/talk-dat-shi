@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .local_stt import LOCAL_MODELS
+
 
 @dataclass(frozen=True)
 class STTModel:
@@ -318,26 +320,26 @@ PROVIDERS: tuple[STTProvider, ...] = (
     ),
     STTProvider(
         id="local",
-        label="Local / Open Weights",
-        api_kind="external",
+        label="Local / On-Device",
+        api_kind="local_batch",
         env_key="",
-        docs_url="https://huggingface.co/models?pipeline_tag=automatic-speech-recognition",
-        key_label="Local endpoint",
+        docs_url="https://github.com/istupakov/onnx-asr",
+        key_label="No key needed",
         key_optional=True,
         supports_streaming=False,
         supports_batch=True,
-        models=(
+        models=tuple(
             STTModel(
-                "whisper-large-v3-local",
-                "Whisper Large v3 Local",
+                local_model.id,
+                local_model.label,
                 "batch",
-                ("faster-whisper", "whisper.cpp"),
+                ("auto",),
+                notes=f"{local_model.languages}. ~{local_model.size_mb} MB download. {local_model.notes}".strip(),
                 open_weights=True,
-            ),
-            STTModel("parakeet-local", "Parakeet Local", "batch", ("riva", "nemo"), open_weights=True),
-            STTModel("canary-local", "Canary Local", "batch", ("riva", "nemo"), open_weights=True),
+            )
+            for local_model in LOCAL_MODELS
         ),
-        notes="Use a local HTTP runner or future bundled runtime.",
+        notes="Runs fully on this PC. Models download once into the TalkDat models folder; audio never leaves the machine.",
     ),
 )
 

@@ -5,6 +5,7 @@ import json
 import math
 import os
 import sys
+import threading
 import tkinter as tk
 import time
 from collections.abc import Callable
@@ -26,6 +27,15 @@ from .config import (
 )
 from .history import HISTORY_BACKENDS, clear_all_history, create_history_store, history_backend
 from .icon import ensure_icon_file
+from .local_stt import (
+    DEFAULT_LOCAL_MODEL_ID,
+    LOCAL_MODELS,
+    delete_model as delete_local_model,
+    download_model as download_local_model,
+    downloaded_size_mb as local_downloaded_size_mb,
+    is_downloaded as local_model_downloaded,
+    models_dir as local_models_dir,
+)
 from .stt_registry import (
     PROVIDER_BY_ID,
     model_for_id,
@@ -449,6 +459,7 @@ class Overlay:
         self.hover_fade_delay_ms = int(overlay_config.get("hover_fade_delay_ms", 2000))
         self.hover_fade_opacity = float(overlay_config.get("hover_fade_opacity", 0.38))
         self.hide_over_fullscreen_media = bool(overlay_config.get("hide_over_fullscreen_media", True))
+        self.show_session_over_fullscreen = bool(overlay_config.get("show_session_over_fullscreen", False))
         self.fullscreen_poll_ms = int(overlay_config.get("fullscreen_poll_ms", 450))
         self.current_alpha = self.opacity
 
@@ -700,6 +711,9 @@ class Overlay:
         self.hide_over_fullscreen_media = bool(
             overlay_config.get("hide_over_fullscreen_media", self.hide_over_fullscreen_media)
         )
+        self.show_session_over_fullscreen = bool(
+            overlay_config.get("show_session_over_fullscreen", self.show_session_over_fullscreen)
+        )
         self.fullscreen_poll_ms = int(overlay_config.get("fullscreen_poll_ms", self.fullscreen_poll_ms))
         self.wave_loop_start = int(overlay_config.get("wave_loop_start", self.wave_loop_start))
         self.wave_loop_end = int(overlay_config.get("wave_loop_end", self.wave_loop_end))
@@ -734,7 +748,7 @@ class Overlay:
     def _position(self) -> None:
         self._apply_geometry(self.current_width, self.current_height)
 
-    def _apply_geometry(self, width: int, height: int) -> None:
+    def _apply_geometry(self, width: int, height: int, *, finalize: bool = True) -> None:
         width = max(1, int(round(width)))
         height = max(1, int(round(height)))
         left, top, right, bottom = self._logical_work_area()
@@ -746,17 +760,20 @@ class Overlay:
         geometry = f"{width}x{height}+{x}+{y}"
         if geometry != self._last_geometry:
             self.root.geometry(geometry)
-            self.root.minsize(width, height)
             self.canvas.place(x=0, y=0, width=width, height=height)
-            self.root.update_idletasks()
-            self._apply_pill_region(width, height)
+            if finalize:
+                self.root.minsize(width, height)
+                self.root.update_idletasks()
+            self._apply_pill_region(width, height, redraw=finalize)
             self._last_geometry = geometry
         self._draw_visual()
 
-    def _apply_pill_region(self, width: int, height: int) -> None:
-        self._apply_window_region(self.root, width, height, max(1, height // 2))
+    def _apply_pill_region(self, width: int, height: int, *, redraw: bool = True) -> None:
+        self._apply_window_region(self.root, width, height, max(1, height // 2), redraw=redraw)
 
-    def _apply_window_region(self, window: tk.Tk | tk.Toplevel, width: int, height: int, radius: int) -> None:
+    def _apply_window_region(
+        self, window: tk.Tk | tk.Toplevel, width: int, height: int, radius: int, *, redraw: bool = True
+    ) -> None:
         try:
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
@@ -778,7 +795,7 @@ class Overlay:
                 corner = max(1, int(radius) * 2)
                 region = gdi32.CreateRoundRectRgn(0, 0, int(width) + 1, int(height) + 1, corner, corner)
                 if region:
-                    user32.SetWindowRgn(handle, region, True)
+                    user32.SetWindowRgn(handle, region, redraw)
         except Exception:
             pass
 
@@ -809,8 +826,19 @@ class Overlay:
             self._apply_geometry(target_width, target_height)
             return
 
-        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 12), 6, 16))
-        self._animate_resize(self.current_width, self.current_height, target_width, target_height, 0, steps)
+        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 12), 6, 24))
+        # Time-based animation: Windows Tk timers fire at ~15.6 ms granularity, so
+        # progress is driven by real elapsed time, not step counts. Late frames skip
+        # ahead instead of stretching the animation, which is what caused the chop.
+        duration_ms = self._clamp(self.resize_frame_ms * steps * 2.2, 150.0, 600.0)
+        self._animate_resize(
+            self.current_width,
+            self.current_height,
+            target_width,
+            target_height,
+            time.perf_counter(),
+            duration_ms / 1000.0,
+        )
 
     def _animate_resize(
         self,
@@ -818,21 +846,21 @@ class Overlay:
         start_height: int,
         target_width: int,
         target_height: int,
-        step: int,
-        total_steps: int,
+        started_at: float,
+        duration_seconds: float,
     ) -> None:
-        progress = min(1.0, (step + 1) / max(1, total_steps))
-        eased = 1 - pow(1 - progress, 4)
-        width = int(start_width + (target_width - start_width) * eased)
-        height = int(start_height + (target_height - start_height) * eased)
-        self._apply_geometry(width, height)
+        progress = min(1.0, (time.perf_counter() - started_at) / max(0.01, duration_seconds))
+        eased = 1 - pow(1 - progress, 3)
+        width = int(round(start_width + (target_width - start_width) * eased))
+        height = int(round(start_height + (target_height - start_height) * eased))
         if progress >= 1.0:
             self._apply_geometry(target_width, target_height)
             self.resize_after_id = None
             return
+        self._apply_geometry(width, height, finalize=False)
         self.resize_after_id = self.root.after(
-            max(4, self.resize_frame_ms),
-            lambda: self._animate_resize(start_width, start_height, target_width, target_height, step + 1, total_steps),
+            8,
+            lambda: self._animate_resize(start_width, start_height, target_width, target_height, started_at, duration_seconds),
         )
 
     def _layout_compact(self) -> None:
@@ -919,10 +947,22 @@ class Overlay:
     def _set_session_visible_now(self, visible: bool) -> None:
         self.fullscreen_session_visible = visible
         if visible:
+            if self._stay_hidden_during_session():
+                # A fullscreen game/video owns the screen: keep recording and pasting,
+                # but never touch its z-order or pop the pill over it.
+                self._sync_fullscreen_visibility()
+                return
             self.fullscreen_hidden = False
             self.force_visible()
             return
         self._sync_fullscreen_visibility()
+
+    def _stay_hidden_during_session(self) -> bool:
+        return (
+            self.hide_over_fullscreen_media
+            and not self.show_session_over_fullscreen
+            and self._foreground_is_fullscreen()
+        )
 
     def _own_window_handles(self) -> set[int]:
         handles: set[int] = set()
@@ -1015,7 +1055,9 @@ class Overlay:
         if not self.hide_over_fullscreen_media:
             return False
         if self.fullscreen_session_visible or self.state in LIVE_STATES:
-            return False
+            if self.show_session_over_fullscreen:
+                return False
+            return self._foreground_is_fullscreen()
         return self._foreground_is_fullscreen()
 
     def _sync_fullscreen_visibility(self) -> None:
@@ -3247,6 +3289,12 @@ class Overlay:
             wraplength=850,
             style="Flow.Muted.TLabel",
         ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(
+            providers_tab,
+            text="Local models: download / manage on-device models",
+            command=self.open_local_models,
+            style="Flow.TButton",
+        ).grid(row=14, column=0, columnspan=2, sticky="w", pady=(10, 0))
         providers_tab.columnconfigure(1, weight=1)
         providers_tab.rowconfigure(12, weight=1)
 
@@ -3363,6 +3411,7 @@ class Overlay:
         fixed_var = tk.BooleanVar(value=bool(overlay_config.get("fixed_position", True)))
         no_activate_var = tk.BooleanVar(value=bool(overlay_config.get("no_activate", True)))
         fullscreen_hide_var = tk.BooleanVar(value=bool(overlay_config.get("hide_over_fullscreen_media", True)))
+        fullscreen_session_show_var = tk.BooleanVar(value=bool(overlay_config.get("show_session_over_fullscreen", False)))
         fullscreen_poll_var = string_var(overlay_config.get("fullscreen_poll_ms", 450))
 
         add_row(overlay_tab, 0, "Opacity", entry(overlay_tab, opacity_var, 12))
@@ -3389,7 +3438,8 @@ class Overlay:
         check(overlay_tab, "Always same bottom position", fixed_var, 21)
         check(overlay_tab, "Do not steal focus", no_activate_var, 22)
         check(overlay_tab, "Hide pill over fullscreen media", fullscreen_hide_var, 23)
-        add_row(overlay_tab, 24, "Fullscreen check ms", entry(overlay_tab, fullscreen_poll_var, 12))
+        check(overlay_tab, "Show pill while dictating over fullscreen apps", fullscreen_session_show_var, 24)
+        add_row(overlay_tab, 25, "Fullscreen check ms", entry(overlay_tab, fullscreen_poll_var, 12))
 
         hotkey_entries: dict[str, tk.StringVar] = {}
         hotkey_labels = [
@@ -3653,6 +3703,7 @@ class Overlay:
             overlay_config["fixed_position"] = bool(fixed_var.get())
             overlay_config["no_activate"] = bool(no_activate_var.get())
             overlay_config["hide_over_fullscreen_media"] = bool(fullscreen_hide_var.get())
+            overlay_config["show_session_over_fullscreen"] = bool(fullscreen_session_show_var.get())
             overlay_config["fullscreen_poll_ms"] = parse_int(fullscreen_poll_var, 450, 120, 3000)
 
             self.config.setdefault("hotkeys", {}).update(
@@ -3877,6 +3928,172 @@ class Overlay:
         ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
 
         load_text()
+
+    def open_local_models(self) -> None:
+        self.force_visible()
+        window = self._utility_window("local_models", "Talk Dat! Local Models", "900x660", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "Local Models", "#071113")
+        self._local_model_downloads = getattr(self, "_local_model_downloads", set())
+
+        header = tk.Frame(window, bg="#071113")
+        header.pack(fill="x", padx=14, pady=(8, 4))
+        tk.Label(
+            header,
+            text="On-device speech models",
+            bg="#071113",
+            fg="#f4f6fb",
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).pack(side="left")
+        tk.Label(
+            header,
+            text=str(local_models_dir()),
+            bg="#071113",
+            fg="#9aa3b5",
+            font=("Segoe UI", 9),
+            anchor="e",
+        ).pack(side="right")
+        tk.Label(
+            window,
+            text=(
+                "Models download once, then transcribe with no API key and no internet. "
+                "The active local model also auto-downloads on first use."
+            ),
+            bg="#071113",
+            fg="#9aa3b5",
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=14)
+
+        body = tk.Frame(window, bg="#071113")
+        body.pack(fill="both", expand=True, padx=14, pady=(8, 0))
+        canvas = tk.Canvas(body, bg="#071113", bd=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(body, command=canvas.yview)
+        rows_frame = tk.Frame(canvas, bg="#071113")
+        rows_window = canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        rows_frame.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(rows_window, width=e.width))
+
+        def on_wheel(event: tk.Event) -> str:
+            canvas.yview_scroll(-1 if getattr(event, "delta", 0) > 0 else 1, "units")
+            return "break"
+
+        window.bind("<MouseWheel>", on_wheel)
+
+        def active_local_model_id() -> str:
+            settings = provider_settings(self.config, "local")
+            return str(settings.get("model") or DEFAULT_LOCAL_MODEL_ID)
+
+        def set_active(model: Any) -> None:
+            settings = provider_settings(self.config, "local")
+            settings["model"] = model.id
+            settings["variant"] = "auto"
+            self.config.setdefault("stt", {})["provider"] = "local"
+            self._callback("save_settings")()
+            self.set_state("captured", f"Local model set: {model.label}", "Local / On-Device is now the active brand.")
+            refresh()
+
+        def start_download(model: Any) -> None:
+            if model.id in self._local_model_downloads:
+                return
+            self._local_model_downloads.add(model.id)
+            refresh()
+
+            def worker() -> None:
+                error = ""
+                try:
+                    download_local_model(model)
+                except Exception as exc:
+                    error = str(exc) or exc.__class__.__name__
+
+                def done() -> None:
+                    self._local_model_downloads.discard(model.id)
+                    if error:
+                        self.set_state("error", f"Model download failed: {error[:90]}")
+                    else:
+                        self.set_state("captured", f"{model.label} downloaded and ready.", "")
+                    refresh()
+
+                self.root.after(0, done)
+
+            threading.Thread(target=worker, name=f"TalkDatModelDL-{model.id}", daemon=True).start()
+
+        def remove(model: Any) -> None:
+            delete_local_model(model)
+            refresh()
+
+        def refresh() -> None:
+            if not window.winfo_exists():
+                return
+            for child in rows_frame.winfo_children():
+                child.destroy()
+            active_id = active_local_model_id()
+            for model in LOCAL_MODELS:
+                downloading = model.id in self._local_model_downloads
+                downloaded = local_model_downloaded(model)
+                row = tk.Frame(rows_frame, bg="#0d1c20")
+                row.pack(fill="x", pady=3)
+                title = model.label + ("   - active" if model.id == active_id else "")
+                tk.Label(
+                    row,
+                    text=title,
+                    bg="#0d1c20",
+                    fg="#7ee2c3" if model.recommended else "#f2f5fb",
+                    font=("Segoe UI Semibold", 10),
+                    anchor="w",
+                ).grid(row=0, column=0, sticky="w", padx=10, pady=(6, 0))
+                detail = f"{model.languages}  -  ~{model.size_mb} MB"
+                if model.notes:
+                    detail += f"  -  {model.notes}"
+                tk.Label(
+                    row,
+                    text=detail,
+                    bg="#0d1c20",
+                    fg="#9aa3b5",
+                    font=("Segoe UI", 9),
+                    anchor="w",
+                ).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
+                if downloading:
+                    status = "Downloading..."
+                elif downloaded:
+                    status = f"Ready - {local_downloaded_size_mb(model)} MB on disk"
+                else:
+                    status = "Not downloaded"
+                tk.Label(
+                    row,
+                    text=status,
+                    bg="#0d1c20",
+                    fg="#7ee2c3" if downloaded else "#9aa3b5",
+                    font=("Segoe UI", 9),
+                ).grid(row=0, column=1, rowspan=2, sticky="e", padx=10)
+                actions = tk.Frame(row, bg="#0d1c20")
+                actions.grid(row=0, column=2, rowspan=2, sticky="e", padx=(0, 10))
+                if downloaded:
+                    ttk.Button(actions, text="Set active", command=lambda m=model: set_active(m), style="Flow.TButton").pack(
+                        side="left", padx=(0, 6)
+                    )
+                    ttk.Button(actions, text="Delete", command=lambda m=model: remove(m), style="Flow.TButton").pack(side="left")
+                elif not downloading:
+                    download_button = ttk.Button(
+                        actions, text="Download", command=lambda m=model: start_download(m), style="Flow.TButton"
+                    )
+                    download_button.pack(side="left", padx=(0, 6))
+                    ttk.Button(actions, text="Set active", command=lambda m=model: set_active(m), style="Flow.TButton").pack(
+                        side="left"
+                    )
+                row.columnconfigure(0, weight=1)
+
+        controls = tk.Frame(window, bg="#071113")
+        controls.pack(fill="x", padx=14, pady=12)
+        ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+        refresh()
 
     def _history_window_text(self) -> str:
         sections: list[str] = []

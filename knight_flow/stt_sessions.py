@@ -191,6 +191,7 @@ class BatchSTTSession:
             "elevenlabs_batch": self._transcribe_elevenlabs,
             "assemblyai_batch": self._transcribe_assemblyai,
             "gemini_batch": self._transcribe_gemini,
+            "local_batch": self._transcribe_local,
         }
         handler = handlers.get(api_kind)
         if handler is None:
@@ -278,6 +279,18 @@ class BatchSTTSession:
             if status == "error":
                 raise RuntimeError(str(data.get("error") or "AssemblyAI transcription failed"))
         raise TimeoutError("AssemblyAI transcription timed out")
+
+    def _transcribe_local(self, _wav_bytes: bytes) -> str:
+        from . import local_stt
+
+        return local_stt.transcribe(
+            model_id=self.model,
+            pcm16=bytes(self._audio),
+            sample_rate=self.sample_rate,
+            channels=self.channels,
+            language=self.language,
+            status_cb=self._safe_status,
+        )
 
     def _transcribe_gemini(self, wav_bytes: bytes) -> str:
         base = self.api_base or "https://generativelanguage.googleapis.com"

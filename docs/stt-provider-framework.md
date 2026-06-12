@@ -6,6 +6,7 @@ Talk Dat! now separates speech-to-text selection into a provider registry and ru
 
 - `streaming`: microphone audio is sent while the user is actively holding or using hands-free mode. Deepgram uses this path today.
 - `batch`: microphone audio is recorded locally first, then sent after the user releases or stops the session. This keeps hover/idle credit-safe and supports leaderboard models that do not expose a realtime API.
+- `local`: microphone audio is recorded locally and transcribed on-device by onnx-asr or faster-whisper. No key, no network after the one-time model download.
 - `external`: the model is visible in Settings for planning and public customization, but needs a dedicated adapter, signed cloud auth flow, SDK, or local runner before it can execute.
 
 ## Routing
@@ -15,6 +16,7 @@ Session routing is driven entirely by the registry's `api_kind` field, so adding
 - `deepgram_stream` routes to the Deepgram live WebSocket session.
 - `openai_batch` routes to the OpenAI-compatible `POST /v1/audio/transcriptions` adapter (OpenAI, Groq, xAI, Mistral, custom endpoints).
 - `elevenlabs_batch`, `assemblyai_batch`, and `gemini_batch` route to their dedicated batch adapters.
+- `local_batch` routes to the on-device engines in `knight_flow/local_stt.py` (onnx-asr for Parakeet/Canary/GigaAM, faster-whisper for the Whisper families). The selected model auto-downloads on first use and the pill reports download/load progress states.
 - `external` raises a clear "adapter pending" error instead of failing mid-session.
 
 Providers with `key_optional` set (custom OpenAI-compatible endpoints and local runners) skip the API key requirement. Batch HTTP requests retry transient failures (HTTP 408/429/5xx and network errors) with short exponential backoff before surfacing an error.

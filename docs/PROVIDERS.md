@@ -16,6 +16,29 @@ These providers can currently run inside the app.
 | ElevenLabs | Batch | Uses the speech-to-text conversion endpoint. Scribe v2 is the default; ElevenLabs removes Scribe v1 on 2026-07-09. |
 | AssemblyAI | Batch | Uploads audio, starts a transcript job, then polls for completion. Universal-3 Pro is the default model. |
 | Google Gemini | Batch | Sends WAV audio as inline content to Gemini. Gemini 3.5 Flash is the default; the 2.5 family is deprecated and 2.0 Flash was shut down on 2026-06-01. |
+| Local / On-Device | Batch | No API key. Open-weight models run on this PC via onnx-asr (Parakeet, Canary, GigaAM) or faster-whisper (Whisper, Distil-Whisper). The active model auto-downloads on first use; Settings > Providers > Local models manages downloads. |
+
+## Local / On-Device Models
+
+Verified against Handy's catalog, onnx-asr 0.11, and faster-whisper 1.2.1 on 2026-06-12. Models download once into `%APPDATA%\TalkDat\models` and audio never leaves the machine.
+
+| Model | Engine | Languages | Approx. download |
+| --- | --- | --- | --- |
+| Parakeet TDT 0.6B v3 (recommended default) | onnx-asr | 25 European languages, auto-detect | ~460 MB |
+| Parakeet TDT 0.6B v2 | onnx-asr | English | ~460 MB |
+| Canary 1B v2 | onnx-asr | 25 European languages | ~700 MB |
+| Canary 180M Flash | onnx-asr | en, de, es, fr | ~150 MB |
+| GigaAM v3 | onnx-asr | Russian | ~160 MB |
+| Whisper Large v3 Turbo | faster-whisper | 99 languages | ~1.6 GB |
+| Distil-Whisper Large v3.5 | faster-whisper | English | ~1.5 GB |
+| Whisper Large v3 | faster-whisper | 99 languages | ~3.1 GB |
+| Whisper Medium / Medium EN | faster-whisper | 99 languages / English | ~1.5 GB |
+| Whisper Small / Small EN | faster-whisper | 99 languages / English | ~480 MB |
+| Distil-Whisper Medium EN / Small EN | faster-whisper | English | ~750 / ~330 MB |
+| Whisper Base / Base EN | faster-whisper | 99 languages / English | ~145 MB |
+| Whisper Tiny / Tiny EN | faster-whisper | 99 languages / English | ~75 MB |
+
+Parakeet TDT 0.6B v3 is the default because it has the best accuracy-per-speed on plain CPUs (real-time on ordinary desktops), the same reason Handy marks it recommended. Whisper Large v3 Turbo is the pick when you need broad multilingual coverage beyond European languages. Moonshine v2 streaming models are not included yet because no maintained Python runtime exists for them (Handy uses its own Rust engine).
 
 Routing is registry-driven: each provider entry declares an `api_kind`, and the session layer dispatches to the matching adapter. Batch requests retry transient HTTP failures (408/429/5xx and network errors) with short exponential backoff.
 
@@ -40,7 +63,6 @@ These providers appear in the model registry so the UI and config are ready, but
 - Rev AI
 - NVIDIA / Riva / NIM style ASR
 - Alibaba / DashScope (Qwen3-ASR Flash, Qwen3-Omni Flash)
-- Local open-weights runners
 
 ## Model Registry Freshness
 

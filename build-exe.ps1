@@ -43,7 +43,11 @@ $PyInstallerArgs = @(
     "--name", "Talk Dat!",
     "--icon", "$IconPath",
     "--hidden-import", "pystray._win32",
-    "--hidden-import", "PIL._tkinter_finder"
+    "--hidden-import", "PIL._tkinter_finder",
+    "--collect-all", "ctranslate2",
+    "--collect-all", "onnxruntime",
+    "--collect-data", "faster_whisper",
+    "--collect-data", "onnx_asr"
 )
 
 if (Test-Path $AssetsPath) {

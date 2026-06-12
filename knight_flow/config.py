@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "assemblyai": {"api_key": "", "model": "universal-3-pro", "variant": "default", "extra": {}},
             "google_gemini": {"api_key": "", "model": "gemini-3.5-flash", "variant": "default", "extra": {}},
             "custom_openai": {"api_key": "", "api_base": "", "model": "custom-model", "variant": "json", "extra": {}},
+            "local": {"api_key": "", "model": "parakeet-tdt-0.6b-v3", "variant": "auto", "extra": {}},
         },
     },
     "hotkeys": {
@@ -131,6 +132,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "fixed_position": True,
         "no_activate": True,
         "hide_over_fullscreen_media": True,
+        "show_session_over_fullscreen": False,
         "fullscreen_poll_ms": 450,
         "fullscreen_tolerance_px": 8,
     },
