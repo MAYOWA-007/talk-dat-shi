@@ -11,8 +11,12 @@ from urllib.parse import quote_plus
 
 from .chimes import play_chime
 from .config import config_path, full_history_path, history_path, live_draft_path, load_config, save_config
-from .history import create_history_store, history_backend
+from .history import create_history_store, history_backend, pin_text
 from .hotkeys import HotkeyController
+from .http_api import ControlServer
+from .meeting import MeetingRecorder
+from .profiles import active_profile, apply_profile
+from .wake import WakeWordListener
 from .logger import configure_logging
 from .overlay import Overlay
 from .paste import copy_selected_text, copy_text, paste_text, restore_clipboard
@@ -50,6 +54,9 @@ class TalkDatApp:
         self.output_mute_guard = OutputMuteGuard()
         self.update_lock = threading.Lock()
         self.update_in_progress = False
+        self.meeting: MeetingRecorder | None = None
+        self.wake_listener: WakeWordListener | None = None
+        self.control_server: ControlServer | None = None
         record_version_seen(self.config)
         save_config(self.config)
 
@@ -64,6 +71,9 @@ class TalkDatApp:
             "scratchpad": self.open_scratchpad,
             "paste_last": self.paste_last,
             "copy_last": self.copy_last,
+            "pin_last": self.pin_last,
+            "meeting_mode": self.toggle_meeting_mode,
+            "translate_last": lambda: self.run_transform("translate"),
             "push_to_talk": self.start_push_to_talk,
             "push_to_talk_stop": self.stop_session,
             "command_mode": self.start_command_mode,
@@ -108,7 +118,64 @@ class TalkDatApp:
         if bool(self.config.get("updates", {}).get("check_on_start", True)):
             self.overlay.root.after(2600, lambda: self.check_updates(silent=True))
         self._schedule_periodic_update_check()
+        self.control_server = ControlServer(
+            self.config,
+            {
+                "status_provider": self.status_snapshot,
+                "hands_free": self.toggle_hands_free,
+                "panic": self.panic_stop,
+                "paste_last": self.paste_last,
+                "copy_last": self.copy_last,
+                "last_text": lambda: self.last_transcript or self.read_last_history_text(),
+            },
+        )
+        self.control_server.start()
+        self.refresh_wake_word()
         self.overlay.run()
+
+    def refresh_wake_word(self) -> None:
+        enabled = bool(self.config.get("wake_word", {}).get("enabled", False))
+        if enabled and (self.wake_listener is None or not self.wake_listener.running):
+            self.wake_listener = WakeWordListener(
+                self.config,
+                on_wake=self.toggle_hands_free,
+                on_status=lambda message: self.overlay.root.after(
+                    0, lambda: self.overlay.set_state("captured", preview(message, 90), "")
+                ),
+            )
+            self.wake_listener.start()
+        elif not enabled and self.wake_listener is not None:
+            self.wake_listener.stop()
+            self.wake_listener = None
+
+    def pin_last(self) -> None:
+        text = self.last_transcript or self.read_last_history_text()
+        if not text:
+            self.overlay.set_state("error", "No transcript to pin yet.")
+            return
+        try:
+            pin_text(text)
+            self.overlay.set_state("captured", "Pinned last transcript.", preview(text, 112))
+        except OSError as exc:
+            self.overlay.set_state("error", f"Could not pin: {exc}")
+
+    def toggle_meeting_mode(self) -> None:
+        if self.meeting is not None and self.meeting.running:
+            self.meeting.stop()
+            self.meeting = None
+            return
+        log.info("meeting mode start")
+
+        def on_status(message: str) -> None:
+            self.overlay.root.after(0, lambda: self.overlay.set_state("processing", preview(message, 90), ""))
+
+        def on_line(text: str) -> None:
+            self.overlay.root.after(
+                0, lambda: self.overlay.set_state("captured", "Meeting note captured.", preview(text, 112))
+            )
+
+        self.meeting = MeetingRecorder(self.config, on_status=on_status, on_line=on_line)
+        self.meeting.start()
 
     def _schedule_periodic_update_check(self) -> None:
         hours = int(self.config.get("updates", {}).get("check_interval_hours", 24))
@@ -340,7 +407,14 @@ class TalkDatApp:
 
     def handle_dictation(self, raw_text: str) -> None:
         self.overlay.set_state("processing", "Cleaning up transcript.", preview(raw_text, 112))
-        processed = process_dictation(raw_text, self.config)
+        profile = active_profile(self.config)
+        effective_config = apply_profile(self.config, profile)
+        processed = process_dictation(raw_text, effective_config)
+        tone = str(profile.get("tone", "")).strip().lower() if profile else ""
+        if tone and processed.text:
+            rewritten = transform_text(processed.text, tone, self.config)
+            if rewritten:
+                processed.text = rewritten
         log.info("dictation processed: raw_chars=%s final_chars=%s", len(raw_text), len(processed.text))
         self.last_original = processed.original
         self.last_transcript = processed.text
@@ -499,7 +573,7 @@ class TalkDatApp:
         def worker() -> None:
             try:
                 updates = self.config.setdefault("updates", {})
-                info = check_for_update(APP_VERSION)
+                info = check_for_update(APP_VERSION, channel=str(updates.get("channel", "stable")))
                 updates["last_checked_at"] = int(time.time())
                 updates["latest_version"] = info.latest_version
                 updates["latest_release_url"] = info.release_url
@@ -588,6 +662,12 @@ class TalkDatApp:
             self.config.get("hotkeys", {}),
             hold_debounce_ms=int(self.config.get("dictation", {}).get("hold_debounce_ms", 50)),
         )
+        self.refresh_wake_word()
+        if self.control_server is not None:
+            if bool(self.config.get("remote", {}).get("enabled", False)):
+                self.control_server.start()
+            else:
+                self.control_server.stop()
 
     def panic_stop(self) -> None:
         log.info("panic stop requested")
@@ -718,6 +798,12 @@ class TalkDatApp:
             self.session_token = None
         if session:
             session.cancel()
+        if self.meeting is not None:
+            self.meeting.stop()
+        if self.wake_listener is not None:
+            self.wake_listener.stop()
+        if self.control_server is not None:
+            self.control_server.stop()
         self.release_activation_guards()
         self.hotkeys.stop()
         self.tray.stop()
@@ -736,9 +822,37 @@ def timestamp() -> str:
 
 
 def main() -> None:
+    import sys
+
+    cli_actions = {"--toggle": "/toggle", "--cancel": "/cancel", "--paste-last": "/paste-last", "--copy-last": "/copy-last", "--status": "/status"}
+    requested = [cli_actions[arg] for arg in sys.argv[1:] if arg in cli_actions]
+    if requested:
+        _run_cli(requested[0])
+        return
     configure_logging()
     if already_running():
         show_already_running_message()
         return
     app = TalkDatApp()
     app.run()
+
+
+def _run_cli(route: str) -> None:
+    """Send a control command to the running app via the local control API."""
+    import urllib.request
+
+    config = load_config()
+    remote = config.get("remote", {})
+    if not remote.get("enabled", False):
+        print("The local control API is disabled. Enable remote.enabled in Settings first.")
+        return
+    port = int(remote.get("port", 4670))
+    token = str(remote.get("token", "")).strip()
+    url = f"http://127.0.0.1:{port}{route}"
+    if token:
+        url += f"?token={token}"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            print(response.read().decode("utf-8"))
+    except OSError as exc:
+        print(f"Could not reach Talk Dat! on port {port}: {exc}")

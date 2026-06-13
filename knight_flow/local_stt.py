@@ -166,12 +166,24 @@ def downloaded_size_mb(model: LocalModel) -> int:
 def delete_model(model: LocalModel) -> None:
     with _ENGINE_LOCK:
         _ENGINES.pop(model.id, None)
+        _ENGINES.pop(f"{model.id}:gpu", None)
     root = model_dir(model)
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _load_onnx_asr(model: LocalModel) -> Any:
+def _gpu_providers() -> list[str]:
+    try:
+        import onnxruntime
+
+        available = set(onnxruntime.get_available_providers())
+    except Exception:
+        return []
+    preferred = [name for name in ("CUDAExecutionProvider", "DmlExecutionProvider") if name in available]
+    return preferred + ["CPUExecutionProvider"] if preferred else []
+
+
+def _load_onnx_asr(model: LocalModel, gpu: bool = False) -> Any:
     try:
         import onnx_asr
     except ImportError as exc:
@@ -181,15 +193,19 @@ def _load_onnx_asr(model: LocalModel) -> Any:
     target = model_dir(model)
     target.mkdir(parents=True, exist_ok=True)
     quantization = "int8" if model.engine_id.startswith(("nemo-", "istupakov/")) else None
+    providers = _gpu_providers() if gpu else None
+    kwargs: dict[str, Any] = {"quantization": quantization}
+    if providers:
+        kwargs["providers"] = providers
     try:
-        return onnx_asr.load_model(model.engine_id, str(target), quantization=quantization)
+        return onnx_asr.load_model(model.engine_id, str(target), **kwargs)
     except Exception:
-        if quantization:
+        if quantization or providers:
             return onnx_asr.load_model(model.engine_id, str(target))
         raise
 
 
-def _load_faster_whisper(model: LocalModel) -> Any:
+def _load_faster_whisper(model: LocalModel, gpu: bool = False) -> Any:
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -198,24 +214,31 @@ def _load_faster_whisper(model: LocalModel) -> Any:
         ) from exc
     target = model_dir(model)
     target.mkdir(parents=True, exist_ok=True)
-    return WhisperModel(model.engine_id, device="auto", compute_type="int8", download_root=str(target))
+    device = "cuda" if gpu else "auto"
+    try:
+        return WhisperModel(model.engine_id, device=device, compute_type="int8", download_root=str(target))
+    except Exception:
+        if gpu:
+            return WhisperModel(model.engine_id, device="auto", compute_type="int8", download_root=str(target))
+        raise
 
 
-def ensure_loaded(model: LocalModel, status_cb: StatusCallback | None = None) -> Any:
+def ensure_loaded(model: LocalModel, status_cb: StatusCallback | None = None, *, gpu: bool = False) -> Any:
+    cache_key = f"{model.id}:gpu" if gpu else model.id
     with _ENGINE_LOCK:
-        engine = _ENGINES.get(model.id)
+        engine = _ENGINES.get(cache_key)
         if engine is not None:
             return engine
         if status_cb:
             status_cb("downloading_model" if not is_downloaded(model) else "loading_model")
         if model.engine == "onnx_asr":
-            engine = _load_onnx_asr(model)
+            engine = _load_onnx_asr(model, gpu)
         elif model.engine == "faster_whisper":
-            engine = _load_faster_whisper(model)
+            engine = _load_faster_whisper(model, gpu)
         else:
             raise LocalSTTError(f"Unknown local engine: {model.engine}")
         (model_dir(model) / READY_MARKER).write_text("ok", encoding="utf-8")
-        _ENGINES[model.id] = engine
+        _ENGINES[cache_key] = engine
         return engine
 
 
@@ -252,9 +275,13 @@ def _recognize_onnx(engine: Any, audio: Any, sample_rate: int) -> str:
     return result if isinstance(result, str) else str(getattr(result, "text", "") or "")
 
 
-def _recognize_faster_whisper(engine: Any, audio: Any, language: str) -> str:
+def _recognize_faster_whisper(engine: Any, audio: Any, language: str, task: str = "") -> str:
     lang = language.split("-")[0].lower() if language else None
-    segments, _info = engine.transcribe(audio, language=lang or None, vad_filter=True)
+    kwargs: dict[str, Any] = {"language": lang or None, "vad_filter": True}
+    if task == "translate":
+        kwargs["task"] = "translate"
+        kwargs["language"] = None
+    segments, _info = engine.transcribe(audio, **kwargs)
     return " ".join(segment.text.strip() for segment in segments if segment.text.strip())
 
 
@@ -265,13 +292,15 @@ def transcribe(
     sample_rate: int,
     channels: int,
     language: str,
+    gpu: bool = False,
+    task: str = "",
     status_cb: StatusCallback | None = None,
 ) -> str:
     model = local_model_for_id(model_id)
-    engine = ensure_loaded(model, status_cb)
+    engine = ensure_loaded(model, status_cb, gpu=gpu)
     if status_cb:
         status_cb("transcribing")
     audio = _pcm16_to_float32(pcm16, max(1, channels))
     if model.engine == "onnx_asr":
         return _recognize_onnx(engine, audio, sample_rate)
-    return _recognize_faster_whisper(engine, audio, language)
+    return _recognize_faster_whisper(engine, audio, language, task)

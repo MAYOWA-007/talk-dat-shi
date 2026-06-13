@@ -1,6 +1,8 @@
 # Talk Dat! Feature Roadmap
 
-Thirty features that are industry standard across the leading dictation products (Wispr Flow, superwhisper, MacWhisper, Dragon, Aqua Voice, Talon, VoiceInk, Handy), each with an implementation plan grounded in this codebase. Last revised 2026-06-13.
+Thirty features that are industry standard across the leading dictation products (Wispr Flow, superwhisper, MacWhisper, Dragon, Aqua Voice, Talon, VoiceInk, Handy). Last revised 2026-06-13.
+
+**Status: all 30 items below shipped a first implementation on 2026-06-13.** Items marked *(beta)* are functional but young: wake word needs the optional `openwakeword` package, meeting mode's system-audio loopback depends on the PortAudio build and falls back to the microphone, and the browser extension is a load-unpacked developer build. Diarization ships as provider-side speaker labels (AssemblyAI/ElevenLabs/OpenAI diarize models) rather than a dedicated meeting view, and accessibility shipped reduced-motion + keyboard-reachable controls with high-contrast themes still to come.
 
 Effort key: **S** = under a day, **M** = 1-3 days, **L** = a week-plus.
 
@@ -20,7 +22,7 @@ Effort key: **S** = under a day, **M** = 1-3 days, **L** = a week-plus.
    Parakeet v3 and Whisper already auto-detect; store detected language in history entries, add `dictionary.by_language`, and pick replacements per detected language in `text_pipeline`.
 7. **GPU acceleration for local models** (DirectML/CUDA) - M
    Settings toggle that passes `providers=["DmlExecutionProvider"]` to `onnx_asr.load_model` and `device="cuda"` to `WhisperModel` when available; detect via `onnxruntime.get_available_providers()`. Extend `local_stt.ensure_loaded`.
-8. **Wake word activation** ("Hey Talk Dat") - L
+8. **Wake word activation** ("Hey Talk Dat") - L *(shipped, beta)*
    openWakeWord ONNX models run on the existing onnxruntime dependency; low-power loop in a new `wake.py` feeding the existing `toggle_hands_free` callback. Strictly opt-in (always-on mic is a privacy posture change).
 9. **Input device picker + live mic meter + noise suppression** - M
    `sounddevice.query_devices()` dropdown in Settings > Audio; device index plumbed into both session classes; optional RNNoise-style ONNX denoiser pass before STT.
@@ -43,7 +45,7 @@ Effort key: **S** = under a day, **M** = 1-3 days, **L** = a week-plus.
     Variable expansion pass in the snippets engine in `text_pipeline`; TextExpander-standard.
 17. **PII / profanity filter** - M
     Regex pass (emails, cards, SSNs) plus optional LLM redaction via item 3; toggle in Settings > Privacy.
-18. **Meeting transcription mode** (system audio capture) - L
+18. **Meeting transcription mode** (system audio capture) - L *(shipped, beta)*
     WASAPI loopback capture (`soundcard` package or `sounddevice` WASAPI settings) into the existing batch lane with chunked VAD; new "Meeting" tray mode writing live notes to a scratchpad tab. This is the MacWhisper/Granola wedge.
 19. **Speaker diarization view** - M
     Builds on 18: route meeting audio to diarizing providers already in the registry (AssemblyAI speaker-labels, ElevenLabs diarize, gpt-4o-transcribe-diarize); render speaker-colored transcript.
@@ -62,7 +64,7 @@ Effort key: **S** = under a day, **M** = 1-3 days, **L** = a week-plus.
     Keyboard navigation through settings tabs, screen-reader labels on controls, reduced-motion toggle (skips pill animations), high-contrast theme family (theme scaffolding exists, 20 themes already).
 25. **Multi-monitor + pill position presets** - S
     Per-monitor placement and corner presets in `_apply_geometry` / `_logical_work_area`; remember last monitor by device name.
-26. **Browser extension companion** - L
+26. **Browser extension companion** - L *(shipped, beta)*
     Chrome/Edge MV3 extension + native messaging host: focused-field insert without synthetic Ctrl+V, per-site profiles. Pairs with item 1.
 27. **CLI + local HTTP API** - M
     `talk-dat --toggle|--paste-last|--history` via the existing single-instance pipe; optional localhost HTTP for Raycast/Stream Deck/AutoHotkey integrations.

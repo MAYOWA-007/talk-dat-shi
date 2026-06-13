@@ -13,6 +13,8 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
+from .audio_input import apply_gain
+
 
 UpdateCallback = Callable[[str, bool], None]
 StatusCallback = Callable[[str], None]
@@ -69,6 +71,8 @@ class DeepgramLiveSession:
         no_speech_timeout_seconds: int,
         silence_timeout_seconds: int,
         tail_capture_ms: int,
+        input_device: Any = None,
+        gain: float = 1.0,
         on_update: UpdateCallback,
         on_status: StatusCallback,
         on_level: LevelCallback,
@@ -81,6 +85,8 @@ class DeepgramLiveSession:
         self.no_speech_timeout_seconds = no_speech_timeout_seconds
         self.silence_timeout_seconds = silence_timeout_seconds
         self.tail_capture_ms = tail_capture_ms
+        self.input_device = input_device
+        self.gain = float(gain or 1.0)
         self.on_update = on_update
         self.on_status = on_status
         self.on_level = on_level
@@ -146,7 +152,7 @@ class DeepgramLiveSession:
         def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
             if self._cancel_event.is_set() or self._audio_closed.is_set():
                 return
-            data = bytes(indata)
+            data = apply_gain(bytes(indata), self.gain)
             self._put_audio(data)
             level = rms_level(data)
             if level >= 0.025:
@@ -159,6 +165,7 @@ class DeepgramLiveSession:
             channels=channels,
             dtype="int16",
             blocksize=0,
+            device=self.input_device,
             callback=callback,
         )
 

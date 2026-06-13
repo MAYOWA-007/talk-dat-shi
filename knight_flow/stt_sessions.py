@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .audio_input import apply_gain, effective_gain, resolve_input_device
 from .config import deepgram_params
 from .deepgram_live import DeepgramLiveSession, rms_level
 from .stt_registry import PROVIDER_BY_ID, provider_settings, selected_model_id, selected_provider_id, selected_variant
@@ -43,6 +44,8 @@ class BatchSTTSession:
         silence_timeout_seconds: int,
         tail_capture_ms: int,
         extra: dict[str, Any],
+        input_device: Any = None,
+        gain: float = 1.0,
         on_update: UpdateCallback,
         on_status: StatusCallback,
         on_level: LevelCallback,
@@ -62,6 +65,8 @@ class BatchSTTSession:
         self.silence_timeout_seconds = silence_timeout_seconds
         self.tail_capture_ms = tail_capture_ms
         self.extra = extra
+        self.input_device = input_device
+        self.gain = float(gain or 1.0)
         self.on_update = on_update
         self.on_status = on_status
         self.on_level = on_level
@@ -122,7 +127,7 @@ class BatchSTTSession:
         def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
             if self._cancel_event.is_set():
                 return
-            data = bytes(indata)
+            data = apply_gain(bytes(indata), self.gain)
             self._audio.extend(data)
             level = rms_level(data)
             if level >= 0.025:
@@ -135,6 +140,7 @@ class BatchSTTSession:
             channels=self.channels,
             dtype="int16",
             blocksize=0,
+            device=self.input_device,
             callback=callback,
         )
 
@@ -192,6 +198,7 @@ class BatchSTTSession:
             "assemblyai_batch": self._transcribe_assemblyai,
             "gemini_batch": self._transcribe_gemini,
             "local_batch": self._transcribe_local,
+            "deepgram_stream": self._transcribe_deepgram_batch,
         }
         handler = handlers.get(api_kind)
         if handler is None:
@@ -280,6 +287,21 @@ class BatchSTTSession:
                 raise RuntimeError(str(data.get("error") or "AssemblyAI transcription failed"))
         raise TimeoutError("AssemblyAI transcription timed out")
 
+    def _transcribe_deepgram_batch(self, wav_bytes: bytes) -> str:
+        # Pre-recorded lane for Deepgram, used by meeting mode and transcribe_pcm.
+        base = self.api_base or "https://api.deepgram.com"
+        params: dict[str, str] = {"model": self.model or "nova-3", "smart_format": "true", "punctuate": "true"}
+        if self.language:
+            params["language"] = self.language
+        raw = http_request(
+            base + "/v1/listen?" + urlencode(params),
+            method="POST",
+            body=wav_bytes,
+            headers={"Authorization": f"Token {self.api_key}", "Content-Type": "audio/wav"},
+        )
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+        return extract_text(data)
+
     def _transcribe_local(self, _wav_bytes: bytes) -> str:
         from . import local_stt
 
@@ -289,6 +311,8 @@ class BatchSTTSession:
             sample_rate=self.sample_rate,
             channels=self.channels,
             language=self.language,
+            gpu=bool(self.extra.get("gpu", False)),
+            task="translate" if self.extra.get("translate") else "",
             status_cb=self._safe_status,
         )
 
@@ -379,6 +403,9 @@ def create_stt_session(
     model = selected_model_id(config, provider_id)
     variant = selected_variant(config, provider_id)
 
+    input_device = resolve_input_device(config.get("audio", {}).get("input_device", ""))
+    gain = effective_gain(config)
+
     if provider.api_kind == "deepgram_stream":
         params = deepgram_params(config)
         params["model"] = model
@@ -389,6 +416,8 @@ def create_stt_session(
             no_speech_timeout_seconds=no_speech_timeout_seconds,
             silence_timeout_seconds=silence_timeout_seconds,
             tail_capture_ms=tail_capture_ms,
+            input_device=input_device,
+            gain=gain,
             on_update=on_update,
             on_status=on_status,
             on_level=on_level,
@@ -418,12 +447,47 @@ def create_stt_session(
         silence_timeout_seconds=silence_timeout_seconds,
         tail_capture_ms=tail_capture_ms,
         extra=extra,
+        input_device=input_device,
+        gain=gain,
         on_update=on_update,
         on_status=on_status,
         on_level=on_level,
         on_done=on_done,
         on_error=on_error,
     )
+
+
+def transcribe_pcm(config: dict[str, Any], pcm16: bytes, sample_rate: int, channels: int) -> str:
+    """One-shot transcription of already-captured PCM16 audio (meeting mode, tests)."""
+    provider_id = selected_provider_id(config)
+    provider = PROVIDER_BY_ID[provider_id]
+    if provider.api_kind == "external":
+        raise NotImplementedError(f"{provider.label} has no wired adapter yet.")
+    settings = provider_settings(config, provider_id)
+    extra = settings.get("extra", {})
+    noop = lambda *args, **kwargs: None  # noqa: E731
+    session = BatchSTTSession(
+        provider_id=provider_id,
+        api_key=selected_stt_api_key(config, provider_id),
+        api_base=str(settings.get("api_base") or provider.api_base),
+        model=selected_model_id(config, provider_id),
+        variant=selected_variant(config, provider_id),
+        language=str(settings.get("language") or config.get("deepgram", {}).get("language", "en-US")),
+        sample_rate=sample_rate,
+        channels=channels,
+        max_seconds=0,
+        no_speech_timeout_seconds=0,
+        silence_timeout_seconds=0,
+        tail_capture_ms=0,
+        extra=extra if isinstance(extra, dict) else {},
+        on_update=noop,
+        on_status=noop,
+        on_level=noop,
+        on_done=noop,
+        on_error=noop,
+    )
+    session._audio = bytearray(pcm16)
+    return session._transcribe(session._wav_bytes(pcm16)).strip()
 
 
 def multipart_form(fields: dict[str, str], files: dict[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -503,6 +567,15 @@ def extract_text(data: Any) -> str:
             transcript = alternatives[0].get("transcript") if isinstance(alternatives[0], dict) else None
             if isinstance(transcript, str):
                 return transcript
+    results = data.get("results")
+    if isinstance(results, dict):
+        channels = results.get("channels")
+        if isinstance(channels, list) and channels and isinstance(channels[0], dict):
+            alternatives = channels[0].get("alternatives")
+            if isinstance(alternatives, list) and alternatives and isinstance(alternatives[0], dict):
+                transcript = alternatives[0].get("transcript")
+                if isinstance(transcript, str):
+                    return transcript
     candidates = data.get("candidates")
     if isinstance(candidates, list):
         texts: list[str] = []

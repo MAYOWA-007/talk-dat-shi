@@ -3,9 +3,13 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+
+from .llm import llm_rewrite
+from .plugins import plugin_text_filters, plugin_transform
 
 
 FILLER_RE = re.compile(
@@ -104,7 +108,7 @@ def remove_previous_phrase(text: str) -> str:
 
 def apply_backtrack(text: str) -> str:
     text = re.sub(r"^.*\bstart over\b", "", text, flags=re.IGNORECASE).strip()
-    phrases = ["scratch that", "delete that", "remove that", "cancel that"]
+    phrases = ["scratch that", "delete that", "remove that", "cancel that", "undo that", "delete last sentence"]
     lowered = text.lower()
     for phrase in phrases:
         while phrase in lowered:
@@ -114,6 +118,13 @@ def apply_backtrack(text: str) -> str:
             before = remove_previous_phrase(before)
             text = normalize_spaces(f"{before} {after}")
             lowered = text.lower()
+    while "delete last word" in lowered:
+        index = lowered.index("delete last word")
+        before = text[:index].rstrip()
+        after = text[index + len("delete last word"):].lstrip(" ,.;:-")
+        before = re.sub(r"\s*\S+$", "", before)
+        text = normalize_spaces(f"{before} {after}")
+        lowered = text.lower()
     return text
 
 
@@ -134,6 +145,28 @@ def apply_dictionary(text: str, config: dict[str, Any]) -> str:
     return text
 
 
+def expand_snippet_variables(text: str) -> str:
+    if "{" not in text:
+        return text
+    now = time.localtime()
+    values = {
+        "{date}": time.strftime("%Y-%m-%d", now),
+        "{time}": time.strftime("%H:%M", now),
+        "{datetime}": time.strftime("%Y-%m-%d %H:%M", now),
+        "{day}": time.strftime("%A", now),
+    }
+    if "{clipboard}" in text:
+        try:
+            import pyperclip
+
+            values["{clipboard}"] = str(pyperclip.paste() or "")
+        except Exception:
+            values["{clipboard}"] = ""
+    for token, value in values.items():
+        text = text.replace(token, value)
+    return text
+
+
 def apply_snippets(text: str, config: dict[str, Any]) -> str:
     snippets = config.get("snippets", [])
     ordered = sorted(snippets, key=lambda item: len(str(item.get("trigger", ""))), reverse=True)
@@ -144,8 +177,31 @@ def apply_snippets(text: str, config: dict[str, Any]) -> str:
             continue
         stripped = re.sub(r"[.!?]+$", "", text.strip(), flags=re.IGNORECASE)
         if stripped.lower() == trigger.lower():
-            return expansion
-        text = replace_phrase(text, trigger, expansion)
+            return expand_snippet_variables(expansion)
+        text = replace_phrase(text, trigger, expand_snippet_variables(expansion))
+    return text
+
+
+PII_PATTERNS = [
+    (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b"), "[email]"),
+    (re.compile(r"\b(?:\d[ -]?){13,16}\b"), "[card]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[ssn]"),
+    (re.compile(r"\b(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}\b"), "[phone]"),
+]
+
+PROFANITY_RE = re.compile(
+    r"\b(fuck\w*|shit\w*|bitch\w*|asshole\w*|bastard\w*|dick\w*|cunt\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def redact_sensitive(text: str, config: dict[str, Any]) -> str:
+    privacy = config.get("privacy", {})
+    if privacy.get("redact_pii", False):
+        for pattern, token in PII_PATTERNS:
+            text = pattern.sub(token, text)
+    if config.get("cleanup", {}).get("censor_profanity", False):
+        text = PROFANITY_RE.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), text)
     return text
 
 
@@ -194,6 +250,12 @@ def process_dictation(raw: str, config: dict[str, Any]) -> ProcessedText:
     text = apply_snippets(text, config)
     text = apply_dictionary(text, config)
     text = cleanup_text(text, config)
+    text = redact_sensitive(text, config)
+    for text_filter in plugin_text_filters(config):
+        try:
+            text = str(text_filter(text, config))
+        except Exception:
+            continue
     return ProcessedText(original=original, text=text, send_enter=send_enter)
 
 
@@ -302,13 +364,36 @@ def empathize(text: str) -> str:
     )
 
 
+TONE_INSTRUCTIONS = {
+    "polish": "Fix grammar, punctuation, and dictation artifacts. Keep the meaning and voice unchanged.",
+    "formal": "Rewrite in a professional, formal tone suitable for business email.",
+    "friendly": "Rewrite in a warm, friendly, conversational tone.",
+    "concise": "Rewrite as concisely as possible without losing meaning.",
+    "turn_to_list": "Rewrite as a clean Markdown bullet list.",
+    "empathize": "Rewrite with an empathetic, considerate tone.",
+    "translate": "Translate to {target}. Return only the translation.",
+}
+
+
 def transform_text(text: str, transform_id: str, config: dict[str, Any], instruction: str | None = None) -> str:
-    instruction = instruction or transform_id.replace("_", " ")
+    transform_id = transform_id.lower()
+    plugin_output = plugin_transform(transform_id, text, config)
+    if plugin_output is not None:
+        return plugin_output
+
+    if not instruction:
+        instruction = TONE_INSTRUCTIONS.get(transform_id, transform_id.replace("_", " "))
+        if transform_id == "translate":
+            target = str(config.get("transforms", {}).get("translate_to", "English")) or "English"
+            instruction = instruction.format(target=target)
+
+    llm_output = llm_rewrite(text, instruction, config)
+    if llm_output:
+        return llm_output
     ollama_output = transform_with_ollama(text, instruction, config)
     if ollama_output:
         return ollama_output
 
-    transform_id = transform_id.lower()
     if transform_id in {"polish", "fix_grammar"}:
         return polish(text, config)
     if transform_id in {"prompt_engineer", "prompt"}:
@@ -317,10 +402,14 @@ def transform_text(text: str, transform_id: str, config: dict[str, Any], instruc
         return turn_to_list(text)
     if transform_id in {"formal", "make_formal"}:
         return make_formal(text)
+    if transform_id in {"friendly"}:
+        return empathize(text)
     if transform_id in {"concise", "make_concise"}:
         return make_concise(text)
     if transform_id in {"empathize", "empathetic"}:
         return empathize(text)
+    if transform_id == "translate":
+        return text
     return polish(text, config)
 
 

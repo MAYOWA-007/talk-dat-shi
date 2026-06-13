@@ -6,10 +6,21 @@ import threading
 import time
 from typing import Any
 
-from .config import history_db_path, history_path
+from .config import app_dir, history_db_path, history_path
 
 
 HISTORY_BACKENDS = ("jsonl", "sqlite")
+
+COMMON_WORDS = frozenset(
+    "the and for with that this from have will your you are was were has had can could would should "
+    "about just like into over under then than them they their there here when what where which while "
+    "been being our out not but all any some more most very much many each other after before because "
+    "his her him she he it its is am be do does did done get got make made go went come came say said "
+    "see saw know knew think thought take took good great new old big small first last next one two "
+    "three today tomorrow yesterday please thanks thank hello okay yes no maybe also really still "
+    "monday tuesday wednesday thursday friday saturday sunday january february march april may june "
+    "july august september october november december".split()
+)
 
 _COLUMNS = ("type", "text", "original", "command", "transform", "url", "send_enter", "created_at")
 
@@ -227,3 +238,117 @@ def clear_all_history() -> None:
             SqliteHistoryStore().clear()
         except sqlite3.Error:
             pass
+
+
+def pinned_path():
+    return app_dir() / "pinned.json"
+
+
+def pinned_entries() -> list[dict[str, Any]]:
+    path = pinned_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def pin_text(text: str) -> None:
+    text = str(text).strip()
+    if not text:
+        return
+    entries = pinned_entries()
+    if any(entry.get("text") == text for entry in entries):
+        return
+    entries.append({"text": text, "created_at": time.time()})
+    pinned_path().write_text(json.dumps(entries, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def unpin_text(text: str) -> None:
+    entries = [entry for entry in pinned_entries() if entry.get("text") != text]
+    pinned_path().write_text(json.dumps(entries, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def history_stats(config: dict[str, Any]) -> dict[str, Any]:
+    entries = create_history_store(config).recent(20000)
+    total = len(entries)
+    words = sum(len(str(entry.get("text", "")).split()) for entry in entries)
+    days: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for entry in entries:
+        created = entry.get("created_at")
+        if isinstance(created, (int, float)):
+            day = time.strftime("%Y-%m-%d", time.localtime(float(created)))
+            days[day] = days.get(day, 0) + 1
+        kind = str(entry.get("type", "entry"))
+        by_type[kind] = by_type.get(kind, 0) + 1
+    streak = 0
+    probe = time.time()
+    while time.strftime("%Y-%m-%d", time.localtime(probe)) in days:
+        streak += 1
+        probe -= 86400
+    # Speaking averages ~150 wpm against ~40 wpm typing.
+    minutes_saved = max(0.0, words / 40 - words / 150)
+    return {
+        "entries": total,
+        "words": words,
+        "active_days": len(days),
+        "streak_days": streak,
+        "minutes_saved": round(minutes_saved),
+        "by_type": by_type,
+        "busiest_day": max(days, key=days.get) if days else "",
+        "today": days.get(time.strftime("%Y-%m-%d"), 0),
+    }
+
+
+def suggest_vocabulary(config: dict[str, Any], existing: list[str], limit: int = 20) -> list[str]:
+    known = {str(word).strip().lower() for word in existing}
+    counts: dict[str, int] = {}
+    for entry in create_history_store(config).recent(5000):
+        for token in str(entry.get("text", "")).split():
+            word = token.strip(".,!?;:()[]\"'")
+            if len(word) < 4 or not word[0].isupper() or not word.isalpha():
+                continue
+            lower = word.lower()
+            if lower in COMMON_WORDS or lower in known:
+                continue
+            counts[word] = counts.get(word, 0) + 1
+    frequent = [word for word, count in counts.items() if count >= 3]
+    frequent.sort(key=lambda word: -counts[word])
+    return frequent[:limit]
+
+
+def export_history(config: dict[str, Any], fmt: str = "md"):
+    entries = create_history_store(config).recent(20000)
+    exports = app_dir() / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    fmt = fmt if fmt in {"md", "txt", "srt"} else "md"
+    path = exports / f"talk-dat-history-{stamp}.{fmt}"
+    lines: list[str] = []
+    if fmt == "srt":
+        for index, entry in enumerate(entries, 1):
+            created = float(entry.get("created_at") or 0)
+            start = time.strftime("%H:%M:%S", time.localtime(created))
+            lines.extend([str(index), f"{start},000 --> {start},999", str(entry.get("text", "")).strip(), ""])
+    else:
+        if fmt == "md":
+            lines.append(f"# Talk Dat! history export - {time.strftime('%Y-%m-%d %H:%M')}\n")
+        for entry in entries:
+            created = entry.get("created_at")
+            stamp_text = (
+                time.strftime("%Y-%m-%d %H:%M", time.localtime(float(created)))
+                if isinstance(created, (int, float))
+                else ""
+            )
+            text = str(entry.get("text", "")).strip()
+            if not text:
+                continue
+            if fmt == "md":
+                lines.append(f"## {stamp_text} - {str(entry.get('type', 'entry')).replace('_', ' ')}\n\n{text}\n")
+            else:
+                lines.append(f"[{stamp_text}] {text}")
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return path

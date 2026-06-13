@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import app_dir
-from .version import APP_LATEST_RELEASE_API_URL, APP_RELEASES_URL, APP_VERSION, INSTALLER_ASSET_NAME
+from .version import (
+    APP_LATEST_RELEASE_API_URL,
+    APP_RELEASES_API_URL,
+    APP_RELEASES_URL,
+    APP_VERSION,
+    INSTALLER_ASSET_NAME,
+)
 
 
 ProgressCallback = Callable[[int, int], None]
@@ -70,9 +76,10 @@ def _download_request(url: str) -> urllib.request.Request:
     )
 
 
-def _latest_release_payload(timeout: float) -> dict[str, Any]:
+def _latest_release_payload(timeout: float, channel: str = "stable") -> dict[str, Any]:
+    url = APP_RELEASES_API_URL if channel == "beta" else APP_LATEST_RELEASE_API_URL
     try:
-        with urllib.request.urlopen(_request(APP_LATEST_RELEASE_API_URL, timeout), timeout=timeout) as response:
+        with urllib.request.urlopen(_request(url, timeout), timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         if error.code == 404:
@@ -82,13 +89,19 @@ def _latest_release_payload(timeout: float) -> dict[str, Any]:
         raise UpdateError(f"Could not reach GitHub releases: {error.reason}.") from error
     except (TimeoutError, json.JSONDecodeError, OSError) as error:
         raise UpdateError(f"Could not read GitHub release information: {error}.") from error
+    if channel == "beta" and isinstance(payload, list):
+        # Beta channel: newest non-draft release, pre-releases included.
+        for release in payload:
+            if isinstance(release, dict) and not release.get("draft", False):
+                return release
+        raise UpdateError("No published GitHub release found on the beta channel.")
     if not isinstance(payload, dict):
         raise UpdateError("GitHub returned an unexpected release response.")
     return payload
 
 
-def check_for_update(current_version: str = APP_VERSION, timeout: float = 8.0) -> UpdateInfo:
-    payload = _latest_release_payload(timeout)
+def check_for_update(current_version: str = APP_VERSION, timeout: float = 8.0, channel: str = "stable") -> UpdateInfo:
+    payload = _latest_release_payload(timeout, channel if channel in {"stable", "beta"} else "stable")
     tag_name = str(payload.get("tag_name") or "").strip()
     latest_version = tag_name[1:] if tag_name.lower().startswith("v") else tag_name
     if not latest_version:

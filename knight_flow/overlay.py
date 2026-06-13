@@ -17,6 +17,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
+from .audio_input import list_input_devices
 from .config import (
     config_path,
     full_history_path,
@@ -26,7 +27,17 @@ from .config import (
     scratchpad_path,
     scratchpad_tabs_path,
 )
-from .history import HISTORY_BACKENDS, clear_all_history, create_history_store, history_backend
+from .history import (
+    HISTORY_BACKENDS,
+    clear_all_history,
+    create_history_store,
+    export_history,
+    history_backend,
+    history_stats,
+    pinned_entries,
+    suggest_vocabulary,
+    unpin_text,
+)
 from .icon import ensure_icon_file
 from .local_stt import (
     DEFAULT_LOCAL_MODEL_ID,
@@ -754,8 +765,17 @@ class Overlay:
         height = max(1, int(round(height)))
         left, top, right, bottom = self._logical_work_area()
         screen_w = right - left
-        x = left + int((screen_w - width) / 2)
-        y = bottom - height - self.bottom_margin
+        position = str(self.config.get("overlay", {}).get("position", "bottom-center"))
+        if position == "bottom-left":
+            x = left + 24
+        elif position == "bottom-right":
+            x = right - width - 24
+        else:
+            x = left + int((screen_w - width) / 2)
+        if position == "top-center":
+            y = top + self.bottom_margin
+        else:
+            y = bottom - height - self.bottom_margin
         self.current_width = width
         self.current_height = height
         geometry = f"{width}x{height}+{x}+{y}"
@@ -823,6 +843,8 @@ class Overlay:
                 pass
             self.resize_after_id = None
 
+        if bool(self.config.get("ui", {}).get("reduce_motion", False)):
+            animate = False
         if not animate:
             self._apply_geometry(target_width, target_height)
             return
@@ -1962,10 +1984,24 @@ class Overlay:
         self._open_context_menu(x, y)
         return "break"
 
+    def _context_menu_rows(self) -> list[tuple[str, str, str, Any]]:
+        return [
+            ("settings", "Settings", "Controls, providers, themes", self._draw_gear_icon),
+            ("history", "History", "Search, pin, export transcripts", self._draw_history_icon),
+            ("stats", "Stats", "Words, streaks, time saved", self._draw_stats_icon),
+            ("scratchpad", "Scratchpad", "Tabbed local notes", self._draw_scratchpad_icon),
+            ("local_models", "Local models", "On-device, no API key", self._draw_chip_icon),
+            ("check_updates", "Check for updates", "Latest public release", self._draw_update_icon),
+        ]
+
+    MENU_ROW_TOP = 18
+    MENU_ROW_PITCH = 60
+    MENU_ROW_HEIGHT = 48
+
     def _open_context_menu(self, x_root: int, y_root: int) -> None:
         self._close_context_menu()
         width = 318
-        height = 206
+        height = self.MENU_ROW_TOP + self.MENU_ROW_PITCH * (len(self._context_menu_rows()) - 1) + self.MENU_ROW_HEIGHT + 20
         window = tk.Toplevel(self.root)
         window.overrideredirect(True)
         window.attributes("-topmost", True)
@@ -2046,17 +2082,23 @@ class Overlay:
             self.open_settings()
         elif action == "history":
             self.open_history()
+        elif action == "stats":
+            self.open_stats()
         elif action == "scratchpad":
             self.open_scratchpad()
+        elif action == "local_models":
+            self.open_local_models()
+        elif action == "check_updates":
+            callback = self.callbacks.get("check_updates")
+            if callable(callback):
+                callback()
         return "break"
 
     def _context_menu_action_at(self, y: int) -> str:
-        if 18 <= y <= 66:
-            return "settings"
-        if 78 <= y <= 126:
-            return "history"
-        if 138 <= y <= 186:
-            return "scratchpad"
+        for index, (action, _title, _subtitle, _icon) in enumerate(self._context_menu_rows()):
+            top = self.MENU_ROW_TOP + index * self.MENU_ROW_PITCH
+            if top <= y <= top + self.MENU_ROW_HEIGHT:
+                return action
         return ""
 
     def _animate_context_menu(self) -> None:
@@ -2081,14 +2123,17 @@ class Overlay:
         self.context_menu_photo = ImageTk.PhotoImage(image)
         canvas.delete("all")
         canvas.create_image(0, 0, image=self.context_menu_photo, anchor="nw")
-        settings_active = self.context_menu_hover == "settings"
-        history_active = self.context_menu_hover == "history"
-        scratchpad_active = self.context_menu_hover == "scratchpad"
         palette = self._settings_palette(self._settings_theme_key())
         rows = [
-            ("settings", 42, "Settings", "Controls, providers, themes", settings_active, self._draw_gear_icon),
-            ("history", 102, "History", "Private local transcript archive", history_active, self._draw_history_icon),
-            ("scratchpad", 162, "Scratchpad", "Tabbed local notes", scratchpad_active, self._draw_scratchpad_icon),
+            (
+                action,
+                self.MENU_ROW_TOP + index * self.MENU_ROW_PITCH + self.MENU_ROW_HEIGHT // 2,
+                title,
+                subtitle,
+                self.context_menu_hover == action,
+                icon_drawer,
+            )
+            for index, (action, title, subtitle, icon_drawer) in enumerate(self._context_menu_rows())
         ]
         for _name, cy, title, subtitle, active, icon_drawer in rows:
             icon_drawer(canvas, 48, cy, active)
@@ -2140,7 +2185,10 @@ class Overlay:
         panel = Image.alpha_composite(panel, wash)
         draw = ImageDraw.Draw(panel)
 
-        rows = (("settings", 18), ("history", 78), ("scratchpad", 138))
+        rows = tuple(
+            (action, self.MENU_ROW_TOP + index * self.MENU_ROW_PITCH)
+            for index, (action, _title, _subtitle, _icon) in enumerate(self._context_menu_rows())
+        )
         for name, top in rows:
             active = hover == name
             if light:
@@ -2204,6 +2252,34 @@ class Overlay:
         canvas.create_line(cx - 6, cy - 7, cx + 6, cy - 7, fill=muted, width=2, capstyle="round")
         canvas.create_line(cx - 6, cy, cx + 7, cy, fill=color, width=2, capstyle="round")
         canvas.create_line(cx - 6, cy + 7, cx + 4, cy + 7, fill=color, width=2, capstyle="round")
+
+    def _draw_stats_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        muted = "#ffb45d" if active else "#6fc8be"
+        canvas.create_line(cx - 13, cy + 12, cx + 13, cy + 12, fill=color, width=2, capstyle="round")
+        canvas.create_rectangle(cx - 10, cy + 2, cx - 4, cy + 10, outline=muted, width=2)
+        canvas.create_rectangle(cx - 2, cy - 6, cx + 4, cy + 10, outline=color, width=2)
+        canvas.create_rectangle(cx + 6, cy - 12, cx + 12, cy + 10, outline=color, width=2)
+
+    def _draw_chip_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        muted = "#ffb45d" if active else "#6fc8be"
+        canvas.create_rectangle(cx - 10, cy - 10, cx + 10, cy + 10, outline=color, width=2)
+        canvas.create_rectangle(cx - 4, cy - 4, cx + 4, cy + 4, outline=muted, width=2)
+        for offset in (-6, 0, 6):
+            canvas.create_line(cx + offset, cy - 14, cx + offset, cy - 10, fill=color, width=2, capstyle="round")
+            canvas.create_line(cx + offset, cy + 10, cx + offset, cy + 14, fill=color, width=2, capstyle="round")
+            canvas.create_line(cx - 14, cy + offset, cx - 10, cy + offset, fill=color, width=2, capstyle="round")
+            canvas.create_line(cx + 10, cy + offset, cx + 14, cy + offset, fill=color, width=2, capstyle="round")
+
+    def _draw_update_icon(self, canvas: tk.Canvas, cx: int, cy: int, active: bool) -> None:
+        color = "#ffe39a" if active else "#cfe8e1"
+        canvas.create_arc(cx - 12, cy - 12, cx + 12, cy + 12, start=30, extent=300, style="arc", outline=color, width=2)
+        canvas.create_line(cx + 10, cy - 7, cx + 13, cy - 12, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx + 10, cy - 7, cx + 15, cy - 4, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx, cy - 4, cx, cy + 5, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx - 4, cy + 1, cx, cy + 5, fill=color, width=2, capstyle="round")
+        canvas.create_line(cx + 4, cy + 1, cx, cy + 5, fill=color, width=2, capstyle="round")
 
     def _focus_utility_window(self, name: str) -> bool:
         window = self.utility_windows.get(name)
@@ -3061,6 +3137,7 @@ class Overlay:
         providers_tab = make_tab("Providers")
         deepgram_tab = make_tab("Deepgram")
         dictation_tab = make_tab("Dictation")
+        audio_tab = make_tab("Audio")
         overlay_tab = make_tab("Overlay")
         hotkeys_tab = make_tab("Hotkeys")
         dictionary_tab = make_tab("Dictionary")
@@ -3320,8 +3397,64 @@ class Overlay:
         check(core_tab, "Play start and stop sounds", play_sounds_var, 11)
         check(core_tab, "Auto paste transcript", auto_paste_var, 12)
         check(core_tab, "Smart leading space", smart_space_var, 13)
+        updates_channel_var = tk.StringVar(value=str(updates_config.get("channel", "stable")) or "stable")
+        plugins_enabled_var = tk.BooleanVar(value=bool(self.config.get("plugins", {}).get("enabled", False)))
+        remote_config = self.config.setdefault("remote", {})
+        remote_enabled_var = tk.BooleanVar(value=bool(remote_config.get("enabled", False)))
+        add_row(core_tab, 14, "Update channel", combo(core_tab, updates_channel_var, ["stable", "beta"], 14))
+        check(core_tab, "Enable user plugins (loads Python files from the plugins folder)", plugins_enabled_var, 15)
+        check(core_tab, "Enable local control API for automations (127.0.0.1 only)", remote_enabled_var, 16)
+
+        def export_diagnostics_clicked() -> None:
+            try:
+                from .packs import export_diagnostics
+
+                path = export_diagnostics()
+                self.set_state("captured", "Diagnostics exported.", str(path))
+            except Exception as exc:
+                self.set_state("error", f"Diagnostics failed: {exc}")
+
+        def backup_clicked() -> None:
+            from tkinter import filedialog
+
+            from .packs import export_backup
+
+            target = filedialog.asksaveasfilename(
+                defaultextension=".zip", filetypes=[("ZIP", "*.zip")], initialfile="talk-dat-backup.zip"
+            )
+            if not target:
+                return
+            try:
+                export_backup(target)
+                self.set_state("captured", "Settings backup saved.", target)
+            except Exception as exc:
+                self.set_state("error", f"Backup failed: {exc}")
+
+        def restore_clicked() -> None:
+            from tkinter import filedialog
+
+            from .packs import restore_backup
+
+            source = filedialog.askopenfilename(filetypes=[("ZIP", "*.zip")])
+            if not source:
+                return
+            try:
+                restored = restore_backup(source)
+                self.set_state("captured", f"Restored {len(restored)} file(s). Restart Talk Dat! to load them.", "")
+            except Exception as exc:
+                self.set_state("error", f"Restore failed: {exc}")
+
+        maintenance = tk.Frame(core_tab, bg=palette["panel"])
+        maintenance.grid(row=17, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Button(maintenance, text="Export diagnostics ZIP", command=export_diagnostics_clicked, style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(maintenance, text="Backup settings...", command=backup_clicked, style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(maintenance, text="Restore backup...", command=restore_clicked, style="Flow.TButton").pack(side="left")
         ttk.Label(core_tab, text=f"Config: {config_path()}", wraplength=850, style="Flow.Muted.TLabel").grid(
-            row=14, column=0, columnspan=2, sticky="w", pady=(16, 0)
+            row=18, column=0, columnspan=2, sticky="w", pady=(16, 0)
         )
 
         def string_var(value: Any) -> tk.StringVar:
@@ -3441,6 +3574,15 @@ class Overlay:
         check(overlay_tab, "Hide pill over fullscreen media", fullscreen_hide_var, 23)
         check(overlay_tab, "Show pill while dictating over fullscreen apps", fullscreen_session_show_var, 24)
         add_row(overlay_tab, 25, "Fullscreen check ms", entry(overlay_tab, fullscreen_poll_var, 12))
+        position_var = tk.StringVar(value=str(overlay_config.get("position", "bottom-center")))
+        reduce_motion_var = tk.BooleanVar(value=bool(ui.get("reduce_motion", False)))
+        add_row(
+            overlay_tab,
+            26,
+            "Pill position",
+            combo(overlay_tab, position_var, ["bottom-center", "bottom-left", "bottom-right", "top-center"], 18),
+        )
+        check(overlay_tab, "Reduce motion (skip pill animations)", reduce_motion_var, 27)
 
         hotkey_entries: dict[str, tk.StringVar] = {}
         hotkey_labels = [
@@ -3477,6 +3619,65 @@ class Overlay:
         ttk.Label(dictionary_tab, text="Replacements JSON", style="Flow.Muted.TLabel").grid(
             row=1, column=1, sticky="w", pady=(8, 0)
         )
+
+        def suggest_words() -> None:
+            existing = [line.strip() for line in words_text.get("1.0", "end-1c").splitlines() if line.strip()]
+            try:
+                suggestions = suggest_vocabulary(self.config, existing)
+            except OSError:
+                suggestions = []
+            if not suggestions:
+                self.set_state("captured", "No new vocabulary suggestions found yet.", "")
+                return
+            words_text.insert("end", "\n" + "\n".join(suggestions))
+            self.set_state("captured", f"Added {len(suggestions)} suggested word(s) from your history.", "")
+
+        def export_pack_clicked() -> None:
+            from tkinter import filedialog
+
+            from .packs import export_pack
+
+            target = filedialog.asksaveasfilename(
+                defaultextension=".json", filetypes=[("Talk Dat! pack", "*.json")], initialfile="talk-dat-pack.json"
+            )
+            if not target:
+                return
+            try:
+                export_pack(self.config, target)
+                self.set_state("captured", "Dictionary/snippet pack exported.", target)
+            except Exception as exc:
+                self.set_state("error", f"Pack export failed: {exc}")
+
+        def import_pack_clicked() -> None:
+            from tkinter import filedialog
+
+            from .packs import import_pack
+
+            source = filedialog.askopenfilename(filetypes=[("Talk Dat! pack", "*.json")])
+            if not source:
+                return
+            try:
+                added = import_pack(self.config, source)
+                words_text.delete("1.0", "end")
+                words_text.insert("1.0", "\n".join(str(word) for word in self.config.get("dictionary", {}).get("words", [])))
+                self._callback("save_settings")()
+                self.set_state(
+                    "captured",
+                    f"Pack imported: +{added['words']} words, +{added['replacements']} replacements, +{added['snippets']} snippets.",
+                    "",
+                )
+            except Exception as exc:
+                self.set_state("error", f"Pack import failed: {exc}")
+
+        dictionary_buttons = ttk.Frame(dictionary_tab, style="Flow.TFrame")
+        dictionary_buttons.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Button(dictionary_buttons, text="Suggest from history", command=suggest_words, style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(dictionary_buttons, text="Export pack...", command=export_pack_clicked, style="Flow.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(dictionary_buttons, text="Import pack...", command=import_pack_clicked, style="Flow.TButton").pack(side="left")
         dictionary_tab.columnconfigure(0, weight=1)
         dictionary_tab.columnconfigure(1, weight=1)
         dictionary_tab.rowconfigure(0, weight=1)
@@ -3489,17 +3690,95 @@ class Overlay:
         ollama_enabled_var = tk.BooleanVar(value=bool(ollama.get("enabled", False)))
         ollama_url_var = tk.StringVar(value=str(ollama.get("url", "http://localhost:11434/api/generate")))
         ollama_model_var = tk.StringVar(value=str(ollama.get("model", "llama3.1")))
-        custom_text = text_box(transforms_tab, 11)
+        llm = transforms.setdefault("llm", {})
+        llm_provider_var = tk.StringVar(value=str(llm.get("provider", "none")) or "none")
+        llm_model_var = tk.StringVar(value=str(llm.get("model", "")))
+        llm_key_var = tk.StringVar(value=str(llm.get("api_key", "")))
+        llm_base_var = tk.StringVar(value=str(llm.get("api_base", "")))
+        translate_to_var = tk.StringVar(value=str(transforms.get("translate_to", "English")))
+        custom_text = text_box(transforms_tab, 9)
         custom_text.insert("1.0", json.dumps(transforms.get("custom", []), indent=2, ensure_ascii=False))
         check(transforms_tab, "Enable transforms", transforms_enabled_var, 0)
-        check(transforms_tab, "Use Ollama for rewrites", ollama_enabled_var, 1)
-        add_row(transforms_tab, 2, "Ollama URL", entry(transforms_tab, ollama_url_var, 70))
-        add_row(transforms_tab, 3, "Ollama model", entry(transforms_tab, ollama_model_var, 30))
-        ttk.Label(transforms_tab, text="Custom transforms JSON", style="Flow.TLabel").grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        add_row(
+            transforms_tab,
+            1,
+            "AI rewrite provider",
+            combo(transforms_tab, llm_provider_var, ["none", "openai", "anthropic", "gemini", "groq", "custom"], 20),
         )
-        custom_text.grid(row=5, column=0, columnspan=2, sticky="nsew")
-        transforms_tab.rowconfigure(5, weight=1)
+        add_row(transforms_tab, 2, "AI model (blank = default)", entry(transforms_tab, llm_model_var, 36))
+        add_row(transforms_tab, 3, "AI API key", entry(transforms_tab, llm_key_var, 56, show="*"))
+        add_row(transforms_tab, 4, "AI API base (optional)", entry(transforms_tab, llm_base_var, 56))
+        add_row(transforms_tab, 5, "Translate to", entry(transforms_tab, translate_to_var, 24))
+        ttk.Label(
+            transforms_tab,
+            text="The AI provider powers Polish, tone presets, Translate, and per-app tones. Keys can also come from environment variables.",
+            wraplength=860,
+            style="Flow.Muted.TLabel",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        check(transforms_tab, "Use Ollama for rewrites (fallback)", ollama_enabled_var, 7)
+        add_row(transforms_tab, 8, "Ollama URL", entry(transforms_tab, ollama_url_var, 70))
+        add_row(transforms_tab, 9, "Ollama model", entry(transforms_tab, ollama_model_var, 30))
+        ttk.Label(transforms_tab, text="Custom transforms JSON", style="Flow.TLabel").grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        )
+        custom_text.grid(row=11, column=0, columnspan=2, sticky="nsew")
+        transforms_tab.rowconfigure(11, weight=1)
+
+        audio_config = self.config.setdefault("audio", {})
+        audio_device_var = tk.StringVar(value=str(audio_config.get("input_device", "")))
+        gain_var = string_var(audio_config.get("gain_boost", 1.0))
+        quiet_mode_var = tk.BooleanVar(value=bool(audio_config.get("quiet_mode", False)))
+        quiet_boost_var = string_var(audio_config.get("quiet_mode_boost", 3.0))
+        wake_config = self.config.setdefault("wake_word", {})
+        wake_enabled_var = tk.BooleanVar(value=bool(wake_config.get("enabled", False)))
+        wake_model_var = tk.StringVar(value=str(wake_config.get("model", "hey_jarvis")))
+        device_choices = ["(default)"] + list_input_devices()
+        device_box = combo(audio_tab, audio_device_var, device_choices, 52)
+        if not str(audio_config.get("input_device", "")).strip():
+            audio_device_var.set("(default)")
+        add_row(audio_tab, 0, "Microphone", device_box)
+        add_row(audio_tab, 1, "Input gain boost", entry(audio_tab, gain_var, 10))
+        check(audio_tab, "Whisper-quiet mode (extra gain for soft speech)", quiet_mode_var, 2)
+        add_row(audio_tab, 3, "Quiet mode boost", entry(audio_tab, quiet_boost_var, 10))
+        mic_test_var = tk.StringVar(value="")
+
+        def test_mic() -> None:
+            mic_test_var.set("Listening for 1 second...")
+
+            def worker() -> None:
+                message = ""
+                try:
+                    import numpy as np
+                    import sounddevice as sd
+
+                    from .audio_input import resolve_input_device as resolve
+
+                    device = resolve(audio_device_var.get().split(":")[0] if ":" in audio_device_var.get() else "")
+                    recording = sd.rec(16000, samplerate=16000, channels=1, dtype="int16", device=device)
+                    sd.wait()
+                    peak = float(np.abs(recording.astype(np.float32)).max()) / 32768.0
+                    if peak < 0.02:
+                        message = f"Very quiet (peak {peak:.2f}). Check the mic or enable quiet mode."
+                    else:
+                        message = f"Mic OK. Peak level {peak:.2f}."
+                except Exception as exc:
+                    message = f"Mic test failed: {exc}"
+                self.root.after(0, lambda: mic_test_var.set(message))
+
+            threading.Thread(target=worker, name="TalkDatMicTest", daemon=True).start()
+
+        add_row(audio_tab, 4, "Mic check", ttk.Button(audio_tab, text="Test microphone", command=test_mic, style="Flow.TButton"))
+        ttk.Label(audio_tab, textvariable=mic_test_var, wraplength=820, style="Flow.Muted.TLabel").grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(2, 10)
+        )
+        check(audio_tab, "Wake word activation (beta, needs openwakeword package)", wake_enabled_var, 6)
+        add_row(audio_tab, 7, "Wake word model", entry(audio_tab, wake_model_var, 24))
+        ttk.Label(
+            audio_tab,
+            text="Wake word keeps the microphone open in a low-power local loop and toggles hands-free when it hears the phrase. Audio never leaves this PC.",
+            wraplength=860,
+            style="Flow.Muted.TLabel",
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         history_limit_var = string_var(privacy.get("history_limit", 0))
         history_backend_var = tk.StringVar(value=history_backend(self.config))
@@ -3523,6 +3802,10 @@ class Overlay:
         ttk.Label(privacy_tab, text=f"Live draft: {live_draft_path()}", wraplength=880, style="Flow.Muted.TLabel").grid(
             row=6, column=0, columnspan=2, sticky="w", pady=6
         )
+        redact_pii_var = tk.BooleanVar(value=bool(privacy.get("redact_pii", False)))
+        censor_var = tk.BooleanVar(value=bool(cleanup.get("censor_profanity", False)))
+        check(privacy_tab, "Redact emails, phone numbers, cards, SSNs before pasting", redact_pii_var, 7)
+        check(privacy_tab, "Censor profanity", censor_var, 8)
 
         button_row = tk.Frame(window, bg=palette["bg"])
         button_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
@@ -3658,10 +3941,30 @@ class Overlay:
             sync_legacy_deepgram(self.config)
 
             cleanup["level"] = level_var.get().strip().lower() or "high"
+            cleanup["censor_profanity"] = bool(censor_var.get())
             privacy["save_history"] = bool(save_history_var.get())
             privacy["history_limit"] = parse_int(history_limit_var, 0, 0, 100000)
+            privacy["redact_pii"] = bool(redact_pii_var.get())
             backend_choice = history_backend_var.get().strip().lower()
             privacy["history_backend"] = backend_choice if backend_choice in HISTORY_BACKENDS else "jsonl"
+            audio_config["input_device"] = (
+                "" if audio_device_var.get().strip() in {"", "(default)"} else audio_device_var.get().split(":")[0].strip()
+            )
+            audio_config["gain_boost"] = parse_float(gain_var, 1.0, 0.1, 16.0)
+            audio_config["quiet_mode"] = bool(quiet_mode_var.get())
+            audio_config["quiet_mode_boost"] = parse_float(quiet_boost_var, 3.0, 1.0, 16.0)
+            wake_config["enabled"] = bool(wake_enabled_var.get())
+            wake_config["model"] = wake_model_var.get().strip() or "hey_jarvis"
+            llm["provider"] = llm_provider_var.get().strip().lower() or "none"
+            llm["model"] = llm_model_var.get().strip()
+            llm["api_key"] = llm_key_var.get().strip()
+            llm["api_base"] = llm_base_var.get().strip()
+            transforms["translate_to"] = translate_to_var.get().strip() or "English"
+            self.config.setdefault("plugins", {})["enabled"] = bool(plugins_enabled_var.get())
+            remote_config["enabled"] = bool(remote_enabled_var.get())
+            updates_config["channel"] = updates_channel_var.get().strip().lower() or "stable"
+            ui["reduce_motion"] = bool(reduce_motion_var.get())
+            overlay_config["position"] = position_var.get().strip() or "bottom-center"
             dictation_config["play_sounds"] = bool(play_sounds_var.get())
             dictation_config["auto_paste"] = bool(auto_paste_var.get())
             dictation_config["smart_leading_space"] = bool(smart_space_var.get())
@@ -3847,6 +4150,19 @@ class Overlay:
             anchor="e",
         ).pack(side="right")
 
+        search_row = tk.Frame(window, bg="#071113")
+        search_row.pack(fill="x", padx=14, pady=(0, 6))
+        search_var = tk.StringVar(value="")
+        search_entry = ttk.Entry(search_row, textvariable=search_var, width=44)
+        search_entry.pack(side="left", padx=(0, 8))
+        ttk.Button(search_row, text="Search", command=lambda: load_text(), style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(
+            search_row,
+            text="Show all",
+            command=lambda: (search_var.set(""), load_text()),
+            style="Flow.TButton",
+        ).pack(side="left")
+
         body = tk.Frame(window, bg="#071113")
         body.pack(fill="both", expand=True, padx=14)
         scrollbar = ttk.Scrollbar(body)
@@ -3871,10 +4187,12 @@ class Overlay:
         def load_text() -> None:
             text.configure(state="normal")
             text.delete("1.0", "end")
-            content = self._history_window_text()
+            content = self._history_window_text(search_var.get().strip())
             text.insert("1.0", content)
             text.configure(state="disabled")
             text.see("end")
+
+        search_entry.bind("<Return>", lambda _event: load_text())
 
         def copy_value(value: str) -> None:
             self.root.clipboard_clear()
@@ -3914,21 +4232,100 @@ class Overlay:
             load_text()
             self.set_state("captured", "History cleared. Mic off.", "")
 
+        def pin_last() -> None:
+            callback = self.callbacks.get("pin_last")
+            if callable(callback):
+                callback()
+            load_text()
+
+        def export_as(fmt: str) -> None:
+            try:
+                path = export_history(self.config, fmt)
+                self.set_state("captured", f"Exported history to {path.name}.", str(path))
+                open_file(path.parent)
+            except OSError as exc:
+                self.set_state("error", f"Export failed: {exc}")
+
         controls = tk.Frame(window, bg="#071113")
         controls.pack(fill="x", padx=14, pady=12)
         ttk.Button(controls, text="Copy all", command=copy_all, style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Copy selection", command=copy_selection, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Pin last", command=pin_last, style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Export MD", command=lambda: export_as("md"), style="Flow.TButton").pack(side="left", padx=(0, 8))
+        ttk.Button(controls, text="Export SRT", command=lambda: export_as("srt"), style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Refresh", command=load_text, style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Open history file", command=lambda: open_file(full_history_path()), style="Flow.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(controls, text="Open live draft", command=lambda: open_file(live_draft_path()), style="Flow.TButton").pack(
             side="left", padx=(0, 8)
         )
         ttk.Button(controls, text="Clear history", command=clear_history, style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
 
         load_text()
+
+    def open_stats(self) -> None:
+        self.force_visible()
+        window = self._utility_window("stats", "Talk Dat! Stats", "560x520", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "Stats", "#071113")
+        tk.Label(
+            window,
+            text="Your dictation, by the numbers",
+            bg="#071113",
+            fg="#f4f6fb",
+            font=("Segoe UI Semibold", 14),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(14, 2))
+        tk.Label(
+            window,
+            text="Computed locally from your private history. Nothing is uploaded.",
+            bg="#071113",
+            fg="#9aa3b5",
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", padx=18)
+        rows_frame = tk.Frame(window, bg="#071113")
+        rows_frame.pack(fill="both", expand=True, padx=18, pady=12)
+
+        def refresh() -> None:
+            for child in rows_frame.winfo_children():
+                child.destroy()
+            try:
+                stats = history_stats(self.config)
+            except OSError:
+                stats = {}
+            minutes = int(stats.get("minutes_saved", 0))
+            hours, minutes_rem = divmod(minutes, 60)
+            saved = f"{hours}h {minutes_rem}m" if hours else f"{minutes_rem}m"
+            items = [
+                ("Words dictated", f"{stats.get('words', 0):,}"),
+                ("Dictations", f"{stats.get('entries', 0):,}"),
+                ("Today", f"{stats.get('today', 0):,} dictations"),
+                ("Current streak", f"{stats.get('streak_days', 0)} day(s)"),
+                ("Active days", f"{stats.get('active_days', 0)}"),
+                ("Estimated typing time saved", saved),
+                ("Busiest day", stats.get("busiest_day") or "-"),
+            ]
+            for index, (label, value) in enumerate(items):
+                row = tk.Frame(rows_frame, bg="#0d1c20")
+                row.pack(fill="x", pady=3)
+                tk.Label(row, text=label, bg="#0d1c20", fg="#9aa3b5", font=("Segoe UI", 10), anchor="w").pack(
+                    side="left", padx=12, pady=8
+                )
+                tk.Label(
+                    row,
+                    text=value,
+                    bg="#0d1c20",
+                    fg="#7ee2c3",
+                    font=("Segoe UI Semibold", 12),
+                    anchor="e",
+                ).pack(side="right", padx=12, pady=8)
+
+        controls = tk.Frame(window, bg="#071113")
+        controls.pack(fill="x", padx=18, pady=(0, 14))
+        ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left")
+        ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+        refresh()
 
     def open_local_models(self) -> None:
         self.force_visible()
@@ -4233,8 +4630,32 @@ class Overlay:
         if not data.get("has_installer"):
             status_var.set("This release has no setup EXE attached yet. Use View on GitHub to download manually.")
 
-    def _history_window_text(self) -> str:
+    def _history_window_text(self, query: str = "") -> str:
         sections: list[str] = []
+        if query:
+            try:
+                matches = create_history_store(self.config).search(query, 200)
+            except OSError:
+                matches = []
+            if not matches:
+                return f"No history entries match: {query}\n"
+            blocks = []
+            for entry in matches:
+                created = entry.get("created_at")
+                stamp = (
+                    time.strftime("%Y-%m-%d %H:%M", time.localtime(float(created)))
+                    if isinstance(created, (int, float))
+                    else ""
+                )
+                blocks.append(f"{stamp}\n{str(entry.get('text', '')).strip()}")
+            return f"SEARCH RESULTS for '{query}' ({len(matches)})\n" + "=" * 72 + "\n\n" + "\n\n".join(blocks) + "\n"
+
+        pinned = pinned_entries()
+        if pinned:
+            pin_lines = [str(entry.get("text", "")).strip() for entry in pinned if str(entry.get("text", "")).strip()]
+            if pin_lines:
+                sections.append("PINNED\n" + "=" * 72 + "\n" + "\n\n".join(f"* {line}" for line in pin_lines))
+
         draft_path = live_draft_path()
         if draft_path.exists():
             draft = draft_path.read_text(encoding="utf-8", errors="replace").strip()

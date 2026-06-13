@@ -25,7 +25,14 @@ Cloud providers are bring-your-own-key. The Local / On-Device brand needs no key
 - Glass settings UI with 10 named theme families, dark/light variants, and live theme preview.
 - Version tracking plus GitHub Release update checks and installer download from inside the app.
 - Local transcript history and live draft files, with a choice of plain JSONL or a local searchable SQLite database.
-- Smart leading space, snippets, custom dictionary words, replacements, cleanup transforms, and optional local Ollama rewrites.
+- Smart leading space, snippets with `{date}`/`{time}`/`{clipboard}` variables, custom dictionary words, replacements, and cleanup transforms.
+- AI rewrites with your own key: OpenAI, Anthropic, Gemini, Groq, or local Ollama power Polish, tone presets (formal, friendly, concise), and Translate.
+- Per-app profiles: match a process name (for example `slack`) to its own cleanup level, tone, language, and auto-enter behavior.
+- Voice editing commands ("scratch that", "delete last word", "new line"), optional PII redaction and profanity censoring.
+- History search, pinned transcripts, Markdown/text/SRT export, and a local Stats window (words, streaks, estimated time saved).
+- Audio controls: microphone picker, gain boost, whisper-quiet mode, mic test, and an opt-in wake word (beta, via openwakeword).
+- Meeting mode (beta): chunked transcription of system audio (or mic fallback) into timestamped Markdown notes.
+- Power-user platform: local control API + CLI flags for Stream Deck/AutoHotkey, a Chrome/Edge companion extension, dictionary/snippet packs, settings backup/restore, diagnostics export, portable mode via `portable.flag`, stable/beta update channels, user plugins, pill position presets, and a reduce-motion option.
 - Provider framework with Deepgram streaming, several cloud batch adapters, and a local on-device engine lane.
 
 ## Install

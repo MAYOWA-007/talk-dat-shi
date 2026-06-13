@@ -60,6 +60,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "turn_to_list": [["cmd", "alt", "3"]],
         "view_diff": [["cmd", "alt", "o"]],
         "scratchpad": [],
+        "pin_last": [],
+        "meeting_mode": [],
+        "translate_last": [],
+    },
+    "meeting": {
+        "chunk_seconds": 25,
     },
     "dictation": {
         "max_seconds": 5 * 60,
@@ -83,6 +89,27 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "remove_fillers": True,
         "backtrack": True,
         "smart_newlines": True,
+        "censor_profanity": False,
+    },
+    "audio": {
+        "input_device": "",
+        "gain_boost": 1.0,
+        "quiet_mode": False,
+        "quiet_mode_boost": 3.0,
+    },
+    "profiles": [],
+    "plugins": {
+        "enabled": False,
+    },
+    "wake_word": {
+        "enabled": False,
+        "model": "hey_jarvis",
+        "threshold": 0.55,
+    },
+    "remote": {
+        "enabled": False,
+        "port": 4670,
+        "token": "",
     },
     "dictionary": {
         "words": [
@@ -98,6 +125,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     ],
     "transforms": {
         "enabled": True,
+        "translate_to": "English",
+        "llm": {
+            "provider": "none",
+            "model": "",
+            "api_key": "",
+            "api_base": "",
+            "timeout": 30,
+        },
         "ollama": {
             "enabled": False,
             "url": "http://localhost:11434/api/generate",
@@ -130,6 +165,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "result_hold_ms": 900,
         "error_hold_ms": 5200,
         "fixed_position": True,
+        "position": "bottom-center",
         "no_activate": True,
         "hide_over_fullscreen_media": True,
         "show_session_over_fullscreen": False,
@@ -141,10 +177,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "save_history": True,
         "history_limit": 0,
         "history_backend": "jsonl",
+        "redact_pii": False,
     },
     "ui": {
         "theme": "dark",
         "settings_theme": "Flow Dark",
+        "reduce_motion": False,
     },
     "onboarding": {
         "completed": False,
@@ -152,6 +190,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "updates": {
         "check_on_start": True,
         "auto_download": False,
+        "channel": "stable",
         "check_interval_hours": 24,
         "skip_version": "",
         "current_version": "0.1.1",
@@ -204,10 +243,25 @@ def _migrate_legacy_app_dir(app_data: Path, root: Path) -> None:
     _rename_legacy_root(legacy_root)
 
 
+def _portable_root() -> Path | None:
+    try:
+        import sys
+
+        base = Path(sys.executable if getattr(sys, "frozen", False) else sys.argv[0]).resolve().parent
+        if (base / "portable.flag").exists():
+            return base / "TalkDatData"
+    except Exception:
+        return None
+    return None
+
+
 def app_dir() -> Path:
     override = os.environ.get("TALK_DAT_HOME")
+    portable = _portable_root()
     if override:
         root = Path(override).expanduser()
+    elif portable is not None:
+        root = portable
     else:
         app_data = Path(os.environ.get("APPDATA", Path.home()))
         root = app_data / APP_NAME
