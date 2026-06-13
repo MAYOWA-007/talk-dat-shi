@@ -201,7 +201,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "channel": "stable",
         "check_interval_hours": 24,
         "skip_version": "",
-        "current_version": "0.2.0",
+        "current_version": "0.2.1",
         "last_checked_at": 0,
         "latest_version": "",
         "latest_release_url": "",
