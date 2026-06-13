@@ -18,6 +18,7 @@ from typing import Any
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
 from .audio_input import list_input_devices
+from .chimes import DEFAULT_OFF_SOUND, DEFAULT_ON_SOUND, play_sound_named, sound_label, sound_names
 from .config import (
     config_path,
     full_history_path,
@@ -522,6 +523,7 @@ class Overlay:
         self._open_frames_key: tuple[int, int, int, int] | None = None
         self._open_anim_active: bool = False
         self._open_anim_after: str | None = None
+        self._session_work_area: tuple[int, int, int, int] | None = None
         self.flow_loop_strip: Image.Image | None = None
         self.flow_loop_meta: dict[str, int | float] = {}
         self.flow_frame_cache: dict[tuple[int, int], list[Image.Image]] = {}
@@ -883,8 +885,10 @@ class Overlay:
         # ghosting and the timeline stays smooth regardless of Tk timer jitter.
         self._open_anim_active = True
         order = list(range(len(frames))) if not compact else list(range(len(frames) - 1, -1, -1))
+        # Opening snaps in fast so dictation feels immediate; closing is a touch softer.
+        frame_delay = 9 if not compact else 14
         self._apply_geometry(self.active_width, self.active_height, draw=False)
-        self._play_open_frames(order, 0, target_width, target_height)
+        self._play_open_frames(order, 0, target_width, target_height, frame_delay)
 
     def _ensure_open_frames(self) -> list[ImageTk.PhotoImage] | None:
         key = (self.compact_width, self.compact_height, self.active_width, self.active_height)
@@ -914,7 +918,9 @@ class Overlay:
         except Exception:
             return None
 
-    def _play_open_frames(self, order: list[int], pos: int, target_width: int, target_height: int) -> None:
+    def _play_open_frames(
+        self, order: list[int], pos: int, target_width: int, target_height: int, frame_delay: int = 12
+    ) -> None:
         if pos >= len(order) or not self._open_frames:
             self._open_anim_active = False
             self._open_anim_after = None
@@ -922,7 +928,7 @@ class Overlay:
             return
         self._show_open_photo(self._open_frames[order[pos]])
         self._open_anim_after = self.root.after(
-            16, lambda: self._play_open_frames(order, pos + 1, target_width, target_height)
+            frame_delay, lambda: self._play_open_frames(order, pos + 1, target_width, target_height, frame_delay)
         )
 
     def _show_open_photo(self, photo: ImageTk.PhotoImage) -> None:
@@ -951,10 +957,46 @@ class Overlay:
     def _layout_expanded(self) -> None:
         self._layout_compact()
 
+    def _active_monitor_work_area(self) -> tuple[int, int, int, int] | None:
+        """Work area of the monitor holding the active window (or the cursor's
+        monitor when our own window is focused). Used so the pill appears on the
+        screen the user is actually working on across multiple monitors."""
+        if sys.platform != "win32":
+            return None
+        try:
+            user32 = ctypes.windll.user32
+            monitor_default_to_nearest = 2
+            hwnd = int(user32.GetForegroundWindow())
+            if not hwnd or hwnd in self._own_window_handles():
+                point = wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(point))
+                monitor = user32.MonitorFromPoint(point, monitor_default_to_nearest)
+            else:
+                monitor = user32.MonitorFromWindow(hwnd, monitor_default_to_nearest)
+            if not monitor:
+                return None
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                return None
+            work = info.rcWork
+            if work.right > work.left and work.bottom > work.top:
+                return work.left, work.top, work.right, work.bottom
+        except Exception:
+            return None
+        return None
+
     def _logical_work_area(self) -> tuple[int, int, int, int]:
         tk_width = max(1, int(self.root.winfo_screenwidth()))
         tk_height = max(1, int(self.root.winfo_screenheight()))
-        left, top, right, bottom = self._primary_work_area()
+        follow = bool(self.config.get("overlay", {}).get("follow_active_monitor", True))
+        monitor_rect = self._session_work_area if follow else None
+        if follow and monitor_rect is None:
+            monitor_rect = self._active_monitor_work_area()
+        if monitor_rect is not None:
+            left, top, right, bottom = monitor_rect
+        else:
+            left, top, right, bottom = self._primary_work_area()
         width = right - left
         height = bottom - top
         if width <= 0 or height <= 0:
@@ -979,7 +1021,9 @@ class Overlay:
                     int(bottom * scale_y),
                 )
 
-        if right > tk_width or bottom > tk_height:
+        # An explicit monitor rect may legitimately sit outside the primary screen's
+        # bounds (a second monitor), so only clamp the primary-fallback case.
+        if monitor_rect is None and (right > tk_width or bottom > tk_height):
             return 0, 0, tk_width, tk_height
         return left, top, right, bottom
 
@@ -1029,6 +1073,10 @@ class Overlay:
     def _set_session_visible_now(self, visible: bool) -> None:
         self.fullscreen_session_visible = visible
         if visible:
+            # Lock to the monitor of the app the user is dictating into, captured
+            # before the pill paints, so it appears on the screen they're using.
+            if bool(self.config.get("overlay", {}).get("follow_active_monitor", True)):
+                self._session_work_area = self._active_monitor_work_area()
             if self._stay_hidden_during_session():
                 # A fullscreen game/video owns the screen: keep recording and pasting,
                 # but never touch its z-order or pop the pill over it.
@@ -1037,6 +1085,7 @@ class Overlay:
             self.fullscreen_hidden = False
             self.force_visible()
             return
+        self._session_work_area = None
         self._sync_fullscreen_visibility()
 
     def _stay_hidden_during_session(self) -> bool:
@@ -3646,6 +3695,8 @@ class Overlay:
             combo(overlay_tab, position_var, ["bottom-center", "bottom-left", "bottom-right", "top-center"], 18),
         )
         check(overlay_tab, "Reduce motion (skip pill animations)", reduce_motion_var, 27)
+        follow_monitor_var = tk.BooleanVar(value=bool(overlay_config.get("follow_active_monitor", True)))
+        check(overlay_tab, "Appear on the monitor I'm using (follow the active window)", follow_monitor_var, 28)
 
         hotkey_entries: dict[str, tk.StringVar] = {}
         hotkey_labels = [
@@ -3835,6 +3886,33 @@ class Overlay:
             wraplength=860,
             style="Flow.Muted.TLabel",
         ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        sound_options = [sound_label(name) for name in sound_names()]
+        label_to_sound = {sound_label(name): name for name in sound_names()}
+
+        def sound_picker(row: int, label_text: str, current_key: str, fallback: str) -> tk.StringVar:
+            var = tk.StringVar(value=sound_label(current_key if current_key in label_to_sound.values() else fallback))
+            holder = ttk.Frame(audio_tab, style="Flow.TFrame")
+            box = combo(holder, var, sound_options, 24)
+            box.configure(state="readonly")
+            box.pack(side="left")
+            ttk.Button(
+                holder,
+                text="Preview",
+                command=lambda v=var: play_sound_named(label_to_sound.get(v.get(), fallback), enabled=True),
+                style="Flow.TButton",
+            ).pack(side="left", padx=(8, 0))
+            add_row(audio_tab, row, label_text, holder)
+            return var
+
+        sound_on_var = sound_picker(11, "Activation sound", str(dictation_config.get("sound_on", DEFAULT_ON_SOUND)), DEFAULT_ON_SOUND)
+        sound_off_var = sound_picker(12, "Release sound", str(dictation_config.get("sound_off", DEFAULT_OFF_SOUND)), DEFAULT_OFF_SOUND)
+        ttk.Label(
+            audio_tab,
+            text="20 built-in sounds. Activation defaults to a light felted halo; release to a wooden-block clunk. Preview before saving.",
+            wraplength=860,
+            style="Flow.Muted.TLabel",
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
         mic_test_var = tk.StringVar(value="")
 
         def test_mic() -> None:
@@ -4049,6 +4127,8 @@ class Overlay:
             )
             audio_config["gain_boost"] = parse_float(gain_var, 1.0, 0.1, 16.0)
             dictation_config["paste_mode"] = paste_mode_var.get().strip().lower() or "clipboard"
+            dictation_config["sound_on"] = label_to_sound.get(sound_on_var.get(), DEFAULT_ON_SOUND)
+            dictation_config["sound_off"] = label_to_sound.get(sound_off_var.get(), DEFAULT_OFF_SOUND)
             audio_config["quiet_mode"] = bool(quiet_mode_var.get())
             audio_config["quiet_mode_boost"] = parse_float(quiet_boost_var, 3.0, 1.0, 16.0)
             wake_config["enabled"] = bool(wake_enabled_var.get())
@@ -4063,6 +4143,7 @@ class Overlay:
             updates_config["channel"] = updates_channel_var.get().strip().lower() or "stable"
             ui["reduce_motion"] = bool(reduce_motion_var.get())
             overlay_config["position"] = position_var.get().strip() or "bottom-center"
+            overlay_config["follow_active_monitor"] = bool(follow_monitor_var.get())
             dictation_config["play_sounds"] = bool(play_sounds_var.get())
             dictation_config["auto_paste"] = bool(auto_paste_var.get())
             dictation_config["smart_leading_space"] = bool(smart_space_var.get())
@@ -4140,6 +4221,13 @@ class Overlay:
         )
         ttk.Label(button_row, textvariable=save_status_var, style="Flow.Muted.TLabel").pack(side="left", padx=(4, 0))
         ttk.Button(button_row, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
+        # Always-visible entry to the open-source / on-device model manager, regardless of the active tab.
+        ttk.Button(
+            button_row,
+            text="\U0001f9e0  On-Device Models (open source)",
+            command=self.open_local_models,
+            style="Flow.TButton",
+        ).pack(side="right", padx=(0, 10))
 
     def _format_shortcuts(self, shortcuts: Any) -> str:
         if not isinstance(shortcuts, list):

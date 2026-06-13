@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
-from .chimes import play_chime
+from .chimes import play_chime, prewarm_sounds
 from .config import config_path, full_history_path, history_path, live_draft_path, load_config, save_config
 from .history import create_history_store, history_backend, pin_text
 from .hotkeys import HotkeyController
@@ -116,6 +116,8 @@ class TalkDatApp:
         )
         self.tray.start()
         self.hotkeys.start()
+        dictation = self.config.get("dictation", {})
+        prewarm_sounds([str(dictation.get("sound_on", "felted_halo")), str(dictation.get("sound_off", "wood_block"))])
         self.overlay.set_state(
             "idle",
             "Hold Ctrl+Win to talk. Toggle only with Ctrl+Win+Space or Mic.",
@@ -799,7 +801,9 @@ class TalkDatApp:
         }
 
     def play_sound(self, kind: str) -> None:
-        play_chime(kind, enabled=bool(self.config.get("dictation", {}).get("play_sounds", True)))
+        dictation = self.config.get("dictation", {})
+        name = dictation.get("sound_off", "wood_block") if kind == "off" else dictation.get("sound_on", "felted_halo")
+        play_chime(kind, enabled=bool(dictation.get("play_sounds", True)), name=str(name))
 
     def begin_activation_guards(self) -> None:
         dictation = self.config.get("dictation", {})
