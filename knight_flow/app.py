@@ -107,7 +107,19 @@ class TalkDatApp:
             self.overlay.root.after(450, self.overlay.open_onboarding)
         if bool(self.config.get("updates", {}).get("check_on_start", True)):
             self.overlay.root.after(2600, lambda: self.check_updates(silent=True))
+        self._schedule_periodic_update_check()
         self.overlay.run()
+
+    def _schedule_periodic_update_check(self) -> None:
+        hours = int(self.config.get("updates", {}).get("check_interval_hours", 24))
+        delay_ms = max(1, hours) * 3600 * 1000
+
+        def tick() -> None:
+            if bool(self.config.get("updates", {}).get("check_on_start", True)):
+                self.check_updates(silent=True)
+            self.overlay.root.after(delay_ms, tick)
+
+        self.overlay.root.after(delay_ms, tick)
 
     def needs_onboarding(self) -> bool:
         onboarding = self.config.setdefault("onboarding", {})
@@ -495,53 +507,18 @@ class TalkDatApp:
                 if not info.available:
                     finish(f"Talk Dat! is up to date. v{APP_VERSION}")
                     return
-                if not install:
-                    finish(
-                        f"Update available: v{info.latest_version}",
-                        info.release_url,
-                    )
+                if silent and info.latest_version == str(updates.get("skip_version", "")):
                     return
 
-                auto_download = bool(updates.get("auto_download", False))
-                if silent and not auto_download:
-                    finish(
-                        f"Update available: v{info.latest_version}",
-                        "Open Settings or Status to install the latest public release.",
-                    )
-                    return
-                if not info.installer_url:
-                    webbrowser.open(info.release_url or APP_RELEASES_URL)
-                    finish(
-                        f"Update available: v{info.latest_version}",
-                        "Opened the GitHub release because no setup EXE was attached.",
-                    )
-                    return
-
-                progress_message = {"last": 0}
-
-                def progress(downloaded: int, total: int) -> None:
-                    if silent:
-                        return
-                    if total <= 0:
-                        return
-                    percent = int((downloaded / total) * 100)
-                    if percent >= progress_message["last"] + 12:
-                        progress_message["last"] = percent
-                        self.overlay.root.after(
-                            0,
-                            lambda p=percent: self.overlay.set_state(
-                                "processing", f"Downloading update. {p}%"
-                            ),
-                        )
-
-                installer = download_installer(info, progress=progress)
-                launch_installer(installer)
-                updates["last_installer_path"] = str(installer)
-                save_config(self.config)
-                finish(
-                    f"Update v{info.latest_version} downloaded.",
-                    "The installer has been launched.",
-                )
+                predownloaded: Path | None = None
+                if silent and bool(updates.get("auto_download", False)) and info.installer_url:
+                    try:
+                        predownloaded = download_installer(info)
+                        updates["last_installer_path"] = str(predownloaded)
+                        save_config(self.config)
+                    except UpdateError:
+                        predownloaded = None
+                self.overlay.root.after(0, lambda: self.show_update_window(info, predownloaded))
             except UpdateError as error:
                 finish("Update check failed.", str(error), state="error")
             finally:
@@ -549,6 +526,55 @@ class TalkDatApp:
                     self.update_in_progress = False
 
         threading.Thread(target=worker, name="TalkDatUpdater", daemon=True).start()
+
+    def show_update_window(self, info: Any, predownloaded: Path | None = None) -> None:
+        data = {
+            "current_version": APP_VERSION,
+            "latest_version": info.latest_version,
+            "published_at": info.published_at,
+            "release_notes": info.release_notes,
+            "release_url": info.release_url,
+            "has_installer": bool(info.installer_url),
+            "predownloaded": predownloaded is not None,
+        }
+        self.overlay.open_update_window(
+            data,
+            on_install=lambda set_progress, set_status, on_done: self.install_update(
+                info, predownloaded, set_progress, set_status, on_done
+            ),
+            on_skip=lambda: self.skip_update_version(info.latest_version),
+        )
+
+    def install_update(
+        self,
+        info: Any,
+        predownloaded: Path | None,
+        set_progress: Any,
+        set_status: Any,
+        on_done: Any,
+    ) -> None:
+        def worker() -> None:
+            try:
+                installer = predownloaded
+                if installer is None or not installer.exists():
+                    set_status("Downloading update...")
+                    installer = download_installer(info, progress=set_progress)
+                updates = self.config.setdefault("updates", {})
+                updates["last_installer_path"] = str(installer)
+                save_config(self.config)
+                set_status("Launching installer...")
+                launch_installer(installer)
+                on_done(True, "Installer launched. Talk Dat! will close so the update can finish.")
+                self.overlay.root.after(2200, self.quit)
+            except UpdateError as error:
+                on_done(False, str(error))
+
+        threading.Thread(target=worker, name="TalkDatUpdateInstall", daemon=True).start()
+
+    def skip_update_version(self, version: str) -> None:
+        updates = self.config.setdefault("updates", {})
+        updates["skip_version"] = str(version)
+        save_config(self.config)
 
     def show_overlay(self) -> None:
         self.overlay.show()

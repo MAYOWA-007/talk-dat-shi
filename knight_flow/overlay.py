@@ -8,6 +8,7 @@ import sys
 import threading
 import tkinter as tk
 import time
+import webbrowser
 from collections.abc import Callable
 from ctypes import wintypes
 from pathlib import Path
@@ -4094,6 +4095,143 @@ class Overlay:
         ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
         refresh()
+
+    def open_update_window(
+        self,
+        data: dict[str, Any],
+        on_install: Callable[..., None],
+        on_skip: Callable[[], None],
+    ) -> None:
+        self.force_visible()
+        existing = self.utility_windows.get("update")
+        if existing is not None and existing.winfo_exists():
+            existing.destroy()
+            self.utility_windows.pop("update", None)
+        window = self._utility_window("update", "Talk Dat! Update", "640x560", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "Update", "#071113")
+
+        header = tk.Frame(window, bg="#071113")
+        header.pack(fill="x", padx=18, pady=(14, 2))
+        tk.Label(
+            header,
+            text="A new version of Talk Dat! is ready",
+            bg="#071113",
+            fg="#f4f6fb",
+            font=("Segoe UI Semibold", 14),
+            anchor="w",
+        ).pack(anchor="w")
+        published = str(data.get("published_at", ""))[:10]
+        version_line = f"v{data.get('current_version')}  ->  v{data.get('latest_version')}"
+        if published:
+            version_line += f"   -   published {published}"
+        if data.get("predownloaded"):
+            version_line += "   -   already downloaded"
+        tk.Label(
+            header,
+            text=version_line,
+            bg="#071113",
+            fg="#7ee2c3",
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).pack(anchor="w", pady=(4, 0))
+
+        notes_frame = tk.Frame(window, bg="#071113")
+        notes_frame.pack(fill="both", expand=True, padx=18, pady=(10, 0))
+        notes_scroll = ttk.Scrollbar(notes_frame)
+        notes_scroll.pack(side="right", fill="y")
+        notes = tk.Text(
+            notes_frame,
+            wrap="word",
+            font=("Segoe UI", 10),
+            bg="#102126",
+            fg="#dfe7f2",
+            bd=0,
+            padx=14,
+            pady=12,
+            yscrollcommand=notes_scroll.set,
+        )
+        notes.pack(side="left", fill="both", expand=True)
+        notes_scroll.configure(command=notes.yview)
+        notes_text = str(data.get("release_notes", "")).strip() or "No release notes were attached to this release."
+        notes.insert("1.0", notes_text)
+        notes.configure(state="disabled")
+
+        status_var = tk.StringVar(value="")
+        progress = ttk.Progressbar(window, mode="determinate", maximum=100)
+        tk.Label(
+            window,
+            textvariable=status_var,
+            bg="#071113",
+            fg="#9aa3b5",
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(8, 0))
+
+        def set_status(text: str) -> None:
+            self.root.after(0, lambda: status_var.set(text) if window.winfo_exists() else None)
+
+        def set_progress(downloaded: int, total: int) -> None:
+            if total <= 0:
+                return
+
+            def apply() -> None:
+                if not window.winfo_exists():
+                    return
+                if not progress.winfo_ismapped():
+                    progress.pack(fill="x", padx=18, pady=(6, 0))
+                percent = min(100.0, downloaded / total * 100)
+                progress.configure(value=percent)
+                status_var.set(f"Downloading update... {percent:.0f}%  ({downloaded // (1024 * 1024)} MB)")
+
+            self.root.after(0, apply)
+
+        buttons = tk.Frame(window, bg="#071113")
+        buttons.pack(fill="x", padx=18, pady=14)
+        install_button = ttk.Button(buttons, text="Install now", style="Flow.TButton")
+        later_button = ttk.Button(buttons, text="Later", command=window.destroy, style="Flow.TButton")
+        skip_button = ttk.Button(buttons, text="Skip this version", style="Flow.TButton")
+        github_button = ttk.Button(
+            buttons,
+            text="View on GitHub",
+            command=lambda: webbrowser.open(str(data.get("release_url") or "")),
+            style="Flow.TButton",
+        )
+
+        def on_done(success: bool, message: str) -> None:
+            def apply() -> None:
+                if window.winfo_exists():
+                    status_var.set(message)
+                    if not success:
+                        install_button.configure(state="normal")
+                        later_button.configure(state="normal")
+                        skip_button.configure(state="normal")
+                self.set_state("captured" if success else "error", message, "")
+
+            self.root.after(0, apply)
+
+        def start_install() -> None:
+            install_button.configure(state="disabled")
+            later_button.configure(state="disabled")
+            skip_button.configure(state="disabled")
+            set_status("Preparing update...")
+            on_install(set_progress, set_status, on_done)
+
+        def skip_version() -> None:
+            on_skip()
+            window.destroy()
+            self.set_state("captured", f"Skipping v{data.get('latest_version')}.", "You can still update from Settings.")
+
+        install_button.configure(command=start_install)
+        skip_button.configure(command=skip_version)
+        if data.get("has_installer"):
+            install_button.pack(side="left", padx=(0, 8))
+        github_button.pack(side="left", padx=(0, 8))
+        skip_button.pack(side="left", padx=(0, 8))
+        later_button.pack(side="right")
+        if not data.get("has_installer"):
+            status_var.set("This release has no setup EXE attached yet. Use View on GitHub to download manually.")
 
     def _history_window_text(self) -> str:
         sections: list[str] = []

@@ -43,9 +43,11 @@ The portable ZIP includes `START-HERE.md`, `INSTALL.md`, and `PROVIDERS.md`.
 
 ## Updates
 
-Talk Dat! tracks its installed app version locally and checks the public GitHub Releases feed when update checks are enabled. Settings > Core and the tray menu can check for the latest release, download `Talk-Dat-Setup.exe` into `%APPDATA%\TalkDat\updates`, and launch the installer.
+Talk Dat! checks the public GitHub Releases feed on launch and every 24 hours while running. When a new version exists, a glass update window shows the version jump, release notes, and a one-click **Install now** with a live download progress bar; the app hands off to the installer and closes itself so the update completes cleanly. **Skip this version** and **Later** are always available, and `Settings > Core > Check / install latest` runs the same flow on demand.
 
-Automatic startup checks are enabled by default. Automatic installer download is available as a setting, but it is off by default so users choose when to run a new installer.
+Automatic startup checks are enabled by default. Automatic installer download is available as a setting (the update window then opens with the installer already fetched), but it is off by default so users choose when to run a new installer.
+
+For what is coming next, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Run From Source
 

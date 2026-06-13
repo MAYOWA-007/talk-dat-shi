@@ -152,6 +152,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "updates": {
         "check_on_start": True,
         "auto_download": False,
+        "check_interval_hours": 24,
+        "skip_version": "",
         "current_version": "0.1.1",
         "last_checked_at": 0,
         "latest_version": "",
