@@ -519,6 +519,8 @@ class Overlay:
         self.visual_photo: ImageTk.PhotoImage | None = None
         self.visual_canvas_item: int | None = None
         self._resize_snapshot: Image.Image | None = None
+        self._anim_frame_size: tuple[int, int] | None = None
+        self._anim_pill_size: tuple[int, int] | None = None
         self.flow_loop_strip: Image.Image | None = None
         self.flow_loop_meta: dict[str, int | float] = {}
         self.flow_frame_cache: dict[tuple[int, int], list[Image.Image]] = {}
@@ -862,13 +864,13 @@ class Overlay:
 
         self.compact = compact
         if compact:
-            self._layout_compact()
             target_width = self.compact_width
             target_height = self.compact_height
         else:
-            self._layout_compact()
             target_width = self.active_width
             target_height = self.active_height
+        start_width = self.current_width
+        start_height = self.current_height
 
         if self.resize_after_id:
             try:
@@ -880,22 +882,30 @@ class Overlay:
         if bool(self.config.get("ui", {}).get("reduce_motion", False)):
             animate = False
         if not animate:
+            self._resize_snapshot = None
+            self._anim_frame_size = None
+            self._anim_pill_size = None
             self._apply_geometry(target_width, target_height)
             return
 
-        # Snapshot the destination appearance once, then scale that single bitmap to
-        # each intermediate size. This makes the pill zoom proportionally from its
-        # center instead of re-rendering the wave field every frame (the old chop),
-        # and keeps the window centered the whole way.
+        # Animate by scaling the pill graphic inside a window that is held at the
+        # larger of the start/target size. Because the window never changes size
+        # during the animation, there is no newly-exposed area for Windows to fill
+        # with stale pixels (the doubled/ghosted pill), and the graphic scales up
+        # proportionally from the center.
         self._resize_snapshot = self._compose_pill_image(target_width, target_height, active=not compact)
-        duration_ms = self._clamp(180.0 + abs(target_width - self.current_width) * 0.6, 170.0, 320.0)
+        if self._resize_snapshot is None:
+            self._anim_frame_size = None
+            self._apply_geometry(target_width, target_height)
+            return
+        frame_width = max(start_width, target_width)
+        frame_height = max(start_height, target_height)
+        self._anim_frame_size = (frame_width, frame_height)
+        self._anim_pill_size = (start_width, start_height)
+        self._apply_geometry(frame_width, frame_height, draw=False)
+        duration_ms = self._clamp(150.0 + abs(target_width - start_width) * 0.7, 160.0, 300.0)
         self._animate_resize(
-            self.current_width,
-            self.current_height,
-            target_width,
-            target_height,
-            time.perf_counter(),
-            duration_ms / 1000.0,
+            start_width, start_height, target_width, target_height, time.perf_counter(), duration_ms / 1000.0
         )
 
     def _animate_resize(
@@ -911,25 +921,37 @@ class Overlay:
         eased = 1 - pow(1 - progress, 3)
         width = int(round(start_width + (target_width - start_width) * eased))
         height = int(round(start_height + (target_height - start_height) * eased))
+        self._anim_pill_size = (width, height)
         if progress >= 1.0:
             self._resize_snapshot = None
-            self._apply_geometry(target_width, target_height)
+            self._anim_frame_size = None
+            self._anim_pill_size = None
             self.resize_after_id = None
+            self._apply_geometry(target_width, target_height)
             return
-        # Move/resize the window (centered) without the expensive live re-render,
-        # then blit a cheap scaled copy of the destination snapshot.
-        self._apply_geometry(width, height, finalize=False, draw=self._resize_snapshot is None)
-        snapshot = self._resize_snapshot
-        if snapshot is not None:
-            try:
-                scaled = snapshot.resize((max(1, width), max(1, height)), Image.Resampling.BILINEAR)
-                self._blit_pill_image(scaled)
-            except Exception:
-                self._draw_visual()
+        self._blit_centered_snapshot(width, height)
         self.resize_after_id = self.root.after(
             10,
             lambda: self._animate_resize(start_width, start_height, target_width, target_height, started_at, duration_seconds),
         )
+
+    def _blit_centered_snapshot(self, pill_width: int, pill_height: int) -> None:
+        snapshot = self._resize_snapshot
+        frame = self._anim_frame_size
+        if snapshot is None or frame is None:
+            return
+        frame_width, frame_height = frame
+        try:
+            scaled = snapshot.resize((max(1, pill_width), max(1, pill_height)), Image.Resampling.BILINEAR)
+            if scaled.mode != "RGBA":
+                scaled = scaled.convert("RGBA")
+            canvas_image = Image.new("RGBA", (frame_width, frame_height), (0, 0, 0, 0))
+            offset_x = max(0, (frame_width - scaled.width) // 2)
+            offset_y = max(0, (frame_height - scaled.height) // 2)
+            canvas_image.paste(scaled, (offset_x, offset_y), scaled)
+            self._blit_pill_image(canvas_image)
+        except Exception:
+            pass
 
     def _layout_compact(self) -> None:
         self.canvas.place(x=0, y=0, width=self.current_width, height=self.current_height)
@@ -1294,6 +1316,12 @@ class Overlay:
             pass
 
     def _draw_visual(self) -> None:
+        # During a resize the pill graphic is animated by the resize loop; both the
+        # continuous animation tick and the resize loop render the same centered
+        # snapshot so they never fight over the canvas.
+        if self._resize_snapshot is not None and self._anim_frame_size is not None and self._anim_pill_size is not None:
+            self._blit_centered_snapshot(self._anim_pill_size[0], self._anim_pill_size[1])
+            return
         width = max(1, int(self.current_width))
         height = max(1, int(self.current_height))
         self._draw_compact_reference_visual(width, height, active=not self.compact)
