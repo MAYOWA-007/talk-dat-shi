@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -57,6 +58,9 @@ class TalkDatApp:
         self.meeting: MeetingRecorder | None = None
         self.wake_listener: WakeWordListener | None = None
         self.control_server: ControlServer | None = None
+        self.paused = False
+        self.pending_update: Any | None = None
+        self._previous_version = str(self.config.get("updates", {}).get("current_version", ""))
         record_version_seen(self.config)
         save_config(self.config)
 
@@ -74,6 +78,11 @@ class TalkDatApp:
             "pin_last": self.pin_last,
             "meeting_mode": self.toggle_meeting_mode,
             "translate_last": lambda: self.run_transform("translate"),
+            "pause": self.toggle_pause,
+            "restart": self.restart,
+            "stats": self.open_stats,
+            "local_models": self.open_local_models,
+            "install_update": self.install_or_check_update,
             "push_to_talk": self.start_push_to_talk,
             "push_to_talk_stop": self.stop_session,
             "command_mode": self.start_command_mode,
@@ -118,6 +127,7 @@ class TalkDatApp:
         if bool(self.config.get("updates", {}).get("check_on_start", True)):
             self.overlay.root.after(2600, lambda: self.check_updates(silent=True))
         self._schedule_periodic_update_check()
+        self.overlay.root.after(1500, self.maybe_show_whats_new)
         self.control_server = ControlServer(
             self.config,
             {
@@ -147,6 +157,68 @@ class TalkDatApp:
         elif not enabled and self.wake_listener is not None:
             self.wake_listener.stop()
             self.wake_listener = None
+
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+        if self.paused:
+            self.cancel()
+            self.overlay.set_state("idle", "Talk Dat! paused. Triggers are off.", "Resume from the tray or pill menu.")
+        else:
+            self.overlay.set_state("idle", "Talk Dat! resumed. Hold Ctrl+Win to talk.", "")
+        try:
+            self.tray.set_paused(self.paused)
+        except Exception:
+            pass
+
+    def restart(self) -> None:
+        import os
+        import subprocess
+        import sys
+
+        log.info("restart requested")
+        with self.lock:
+            session = self.session
+            self.session = None
+        if session:
+            session.cancel()
+        self.release_activation_guards()
+        try:
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable], close_fds=True)
+            else:
+                subprocess.Popen([sys.executable, "-m", "knight_flow"], close_fds=True, cwd=str(self.project_root))
+        except Exception as exc:
+            log.warning("restart failed to launch new instance: %s", exc)
+            self.overlay.set_state("error", f"Could not restart: {exc}")
+            return
+        os._exit(0)
+
+    def install_or_check_update(self) -> None:
+        if self.pending_update is not None:
+            self.show_update_window(self.pending_update)
+        else:
+            self.check_updates(silent=False)
+
+    def maybe_show_whats_new(self) -> None:
+        previous = self._previous_version
+        if not previous or previous == APP_VERSION:
+            return
+
+        def worker() -> None:
+            notes = ""
+            url = str(self.config.get("updates", {}).get("latest_release_url", "")) or APP_RELEASES_URL
+            try:
+                info = check_for_update(APP_VERSION)
+                if info.latest_version == APP_VERSION:
+                    notes = info.release_notes
+                    url = info.release_url or url
+            except UpdateError:
+                notes = ""
+            self.overlay.root.after(
+                0, lambda: self.overlay.open_whats_new(previous, APP_VERSION, notes, url)
+            )
+
+        threading.Thread(target=worker, name="TalkDatWhatsNew", daemon=True).start()
 
     def pin_last(self) -> None:
         text = self.last_transcript or self.read_last_history_text()
@@ -229,6 +301,10 @@ class TalkDatApp:
         return True
 
     def start_session(self, mode: str, message: str, *, control: str = "hold") -> None:
+        if self.paused:
+            log.info("session start ignored: paused")
+            self.overlay.set_state("idle", "Talk Dat! is paused. Resume from the tray or pill menu.", "")
+            return
         with self.lock:
             if self.session is not None:
                 log.info("session start ignored: already active")
@@ -442,6 +518,7 @@ class TalkDatApp:
                 send_enter=processed.send_enter,
                 restore_clipboard=bool(self.config.get("dictation", {}).get("restore_clipboard_after_paste", False)),
                 smart_leading_space=bool(self.config.get("dictation", {}).get("smart_leading_space", True)),
+                paste_mode=str(self.config.get("dictation", {}).get("paste_mode", "clipboard")),
             )
         if pasted:
             self.overlay.set_state("captured", "Pasted. Mic off.", preview(processed.text, 112))
@@ -523,6 +600,7 @@ class TalkDatApp:
             self.last_transcript,
             restore_clipboard=bool(self.config.get("dictation", {}).get("restore_clipboard_after_paste", False)),
             smart_leading_space=bool(self.config.get("dictation", {}).get("smart_leading_space", True)),
+            paste_mode=str(self.config.get("dictation", {}).get("paste_mode", "clipboard")),
         )
         self.overlay.set_state("captured", "Pasted last transcript.", preview(self.last_transcript, 112))
 
@@ -554,6 +632,12 @@ class TalkDatApp:
     def open_history(self) -> None:
         self.overlay.root.after(0, self.overlay.open_history)
 
+    def open_stats(self) -> None:
+        self.overlay.root.after(0, self.overlay.open_stats)
+
+    def open_local_models(self) -> None:
+        self.overlay.root.after(0, self.overlay.open_local_models)
+
     def check_updates(self, *, silent: bool = False, install: bool = True) -> None:
         with self.update_lock:
             if self.update_in_progress:
@@ -579,8 +663,18 @@ class TalkDatApp:
                 updates["latest_release_url"] = info.release_url
                 save_config(self.config)
                 if not info.available:
+                    self.pending_update = None
+                    with contextlib.suppress(Exception):
+                        self.tray.set_update_available("")
                     finish(f"Talk Dat! is up to date. v{APP_VERSION}")
                     return
+
+                # Remember the available update so the user can install it any time
+                # from the tray ("Install update vX") or pill menu, not just now.
+                self.pending_update = info
+                with contextlib.suppress(Exception):
+                    self.tray.set_update_available(f"v{info.latest_version}")
+
                 if silent and info.latest_version == str(updates.get("skip_version", "")):
                     return
 
@@ -710,10 +804,13 @@ class TalkDatApp:
     def begin_activation_guards(self) -> None:
         dictation = self.config.get("dictation", {})
         self.overlay.set_session_visible(True)
-        self.output_mute_guard.start(enabled=bool(dictation.get("mute_output_while_recording", True)))
+        self.output_mute_guard.start(
+            enabled=bool(dictation.get("mute_output_while_recording", True)),
+            fade_ms=int(dictation.get("mute_fade_ms", 180)),
+        )
 
     def release_activation_guards(self) -> None:
-        self.output_mute_guard.stop()
+        self.output_mute_guard.stop(fade_ms=int(self.config.get("dictation", {}).get("mute_fade_in_ms", 240)))
         self.overlay.set_session_visible(False)
 
     def write_live_draft(self, mode: str, text: str, is_final: bool) -> None:

@@ -82,6 +82,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "press_enter_command": True,
         "play_sounds": True,
         "mute_output_while_recording": True,
+        "mute_fade_ms": 180,
+        "mute_fade_in_ms": 240,
+        "paste_mode": "clipboard",
     },
     "cleanup": {
         "level": "high",
@@ -153,7 +156,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "active_pill_height": 58,
         "active_width": 320,
         "active_height": 58,
-        "compact_width": 188,
+        "compact_width": 150,
         "compact_height": 44,
         "wave_loop_start": 0,
         "wave_loop_end": 50,
@@ -349,12 +352,13 @@ def normalize_shortcuts(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _migrate_overlay_sizes(config: dict[str, Any], loaded: dict[str, Any]) -> None:
-    """Bump the compact pill size for users still on the previous defaults, without
-    touching configs where the size was customized."""
+    """Land the compact pill on the current default for users still on an older
+    default size, without touching configs where the size was customized."""
     overlay = config.setdefault("overlay", {})
     loaded_overlay = loaded.get("overlay", {}) if isinstance(loaded.get("overlay"), dict) else {}
-    if int(loaded_overlay.get("compact_width", 110)) == 110 and int(loaded_overlay.get("compact_height", 38)) == 38:
-        overlay["compact_width"] = 188
+    current = (int(loaded_overlay.get("compact_width", 110)), int(loaded_overlay.get("compact_height", 38)))
+    if current in {(110, 38), (188, 44)}:
+        overlay["compact_width"] = 150
         overlay["compact_height"] = 44
 
 

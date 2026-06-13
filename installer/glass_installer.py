@@ -764,8 +764,9 @@ class GlassInstaller:
     def __init__(self, mode: str) -> None:
         self.mode = mode
         self.root = tk.Tk()
-        self.width = 780
-        self.height = 560
+        self.width = 820
+        self.height = 612
+        self.MARGIN = 72
         self.running = False
         self.header_index = 0
         self.drag_start: tuple[int, int, int, int] | None = None
@@ -803,12 +804,14 @@ class GlassInstaller:
         self.panel_image = ImageTk.PhotoImage(make_panel_image(self.width, self.height))
         self.canvas.create_image(0, 0, image=self.panel_image, anchor="nw")
         self.header_frames = load_pill_frames(600, 108)
-        self.header_item = self.canvas.create_image(100, 86, image=self.header_frames[0], anchor="nw")
+        self.header_item = self.canvas.create_image((self.width - 600) // 2, 84, image=self.header_frames[0], anchor="nw")
         self.logo_image = load_logo(66)
         if self.logo_image:
             self.canvas.create_image(64, 58, image=self.logo_image, anchor="center")
 
         self._build_chrome()
+        # Thin divider under the header band for a cleaner separation of header and body.
+        self.canvas.create_line(self.MARGIN, 196, self.width - self.MARGIN, 196, fill="#1f4a47")
         if mode == "uninstall":
             self._build_uninstall()
         else:
@@ -823,13 +826,13 @@ class GlassInstaller:
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
     def _build_chrome(self) -> None:
-        title = "Custom Glass Installer" if self.mode == "install" else "Custom Glass Uninstaller"
-        subtitle = "Fast per-user setup. No keys baked in." if self.mode == "install" else "Clean removal. Private data is optional."
-        self.canvas.create_text(102, 45, anchor="w", text=APP_NAME, fill="#fff5d8", font=("Segoe UI Semibold", 22))
-        self.canvas.create_text(104, 76, anchor="w", text=title, fill="#96fff2", font=("Segoe UI", 10))
-        self.canvas.create_text(528, 50, anchor="w", text=subtitle, fill="#d8fff7", font=("Segoe UI", 9))
-        close = PillButton(self.root, "x", self._close, width=38, height=34, variant="ghost")
-        self.canvas.create_window(self.width - 62, 48, window=close)
+        title = "Setup" if self.mode == "install" else "Uninstall"
+        subtitle = "Per-user install. No keys baked in." if self.mode == "install" else "Clean removal. Your data stays unless you choose otherwise."
+        self.canvas.create_text(self.MARGIN + 40, 44, anchor="w", text=APP_NAME, fill="#fff5d8", font=("Segoe UI Semibold", 23))
+        self.canvas.create_text(self.MARGIN + 42, 77, anchor="w", text=title, fill="#96fff2", font=("Segoe UI Semibold", 10))
+        self.canvas.create_text(self.width - self.MARGIN, 50, anchor="e", text=subtitle, fill="#9fc6c0", font=("Segoe UI", 9))
+        close = PillButton(self.root, "x", self._close, width=36, height=32, variant="ghost")
+        self.canvas.create_window(self.width - self.MARGIN + 24, 46, window=close)
 
     def _build_install(self) -> None:
         self.install_dir_var = tk.StringVar(value=str(default_install_dir()))
@@ -838,7 +841,8 @@ class GlassInstaller:
         self.startup_var = tk.BooleanVar(value=False)
         self.launch_var = tk.BooleanVar(value=True)
 
-        self.canvas.create_text(64, 218, anchor="w", text="Install location", fill="#fff3cc", font=("Segoe UI Semibold", 10))
+        right = self.width - self.MARGIN
+        self.canvas.create_text(self.MARGIN, 224, anchor="w", text="INSTALL LOCATION", fill="#ffd477", font=("Segoe UI Semibold", 9))
         entry = tk.Entry(
             self.root,
             textvariable=self.install_dir_var,
@@ -848,64 +852,71 @@ class GlassInstaller:
             relief="flat",
             font=("Segoe UI", 10),
         )
-        self.canvas.create_window(64, 250, anchor="nw", width=530, height=36, window=entry)
-        browse = PillButton(self.root, "Browse", self._browse, width=112, height=38, variant="ghost")
-        self.canvas.create_window(610, 249, anchor="nw", window=browse)
+        browse_width = 116
+        entry_width = right - self.MARGIN - browse_width - 14
+        self.canvas.create_window(self.MARGIN, 250, anchor="nw", width=entry_width, height=40, window=entry)
+        browse = PillButton(self.root, "Browse", self._browse, width=browse_width, height=40, variant="ghost")
+        self.canvas.create_window(right - browse_width, 250, anchor="nw", window=browse)
 
+        self.canvas.create_text(self.MARGIN, 322, anchor="w", text="OPTIONS", fill="#ffd477", font=("Segoe UI Semibold", 9))
         toggles = [
             ToggleRow(self.root, "Desktop shortcut", self.desktop_var),
             ToggleRow(self.root, "Start menu shortcut", self.start_menu_var),
             ToggleRow(self.root, "Launch after install", self.launch_var),
             ToggleRow(self.root, "Start with Windows", self.startup_var),
         ]
+        column_two = self.MARGIN + (right - self.MARGIN) // 2 + 8
         for index, toggle in enumerate(toggles):
-            x = 64 if index % 2 == 0 else 396
-            y = 318 + (index // 2) * 50
+            x = self.MARGIN if index % 2 == 0 else column_two
+            y = 348 + (index // 2) * 54
             self.canvas.create_window(x, y, anchor="nw", window=toggle)
 
         self.canvas.create_text(
-            64,
-            428,
+            self.MARGIN,
+            474,
             anchor="w",
-            text="Privacy: the installer copies app files only. Users add their own provider keys during first-run setup.",
-            fill="#b9d7d1",
+            text="The installer copies app files only. You add your own provider keys during first-run setup.",
+            fill="#8fb3ad",
             font=("Segoe UI", 9),
         )
         self._build_progress()
-        self.primary_button = PillButton(self.root, "Install", self._start_install, width=150, height=42, variant="primary")
-        self.secondary_button = PillButton(self.root, "Cancel", self._close, width=128, height=42, variant="ghost")
-        self.canvas.create_window(520, 500, anchor="nw", window=self.secondary_button)
-        self.canvas.create_window(648, 500, anchor="nw", window=self.primary_button)
+        self.primary_button = PillButton(self.root, "Install", self._start_install, width=158, height=44, variant="primary")
+        self.secondary_button = PillButton(self.root, "Cancel", self._close, width=132, height=44, variant="ghost")
+        self.canvas.create_window(right - 158, 548, anchor="nw", window=self.primary_button)
+        self.canvas.create_window(right - 158 - 14 - 132, 548, anchor="nw", window=self.secondary_button)
 
     def _build_uninstall(self) -> None:
         self.remove_shortcuts_var = tk.BooleanVar(value=True)
         self.remove_user_data_var = tk.BooleanVar(value=False)
         install_dir = installed_location()
 
-        self.canvas.create_text(64, 218, anchor="w", text="Installed location", fill="#fff3cc", font=("Segoe UI Semibold", 10))
-        self.canvas.create_text(64, 250, anchor="w", text=str(install_dir), fill="#ecfff9", font=("Segoe UI", 10))
+        right = self.width - self.MARGIN
+        self.canvas.create_text(self.MARGIN, 224, anchor="w", text="INSTALLED LOCATION", fill="#ffd477", font=("Segoe UI Semibold", 9))
+        self.canvas.create_text(self.MARGIN, 252, anchor="w", text=str(install_dir), fill="#ecfff9", font=("Segoe UI", 10))
         self.canvas.create_text(
-            64,
-            292,
+            self.MARGIN,
+            300,
             anchor="w",
-            text="User config, API keys, dictionaries, snippets, and transcript history are kept unless you choose removal.",
-            fill="#b9d7d1",
+            text="Your config, API keys, dictionaries, snippets, and transcript history are kept unless you choose to remove them.",
+            fill="#8fb3ad",
             font=("Segoe UI", 9),
         )
-        self.canvas.create_window(64, 336, anchor="nw", window=ToggleRow(self.root, "Remove shortcuts and startup entry", self.remove_shortcuts_var, width=410))
-        self.canvas.create_window(64, 386, anchor="nw", window=ToggleRow(self.root, "Also remove private local user data", self.remove_user_data_var, width=410))
+        toggle_width = right - self.MARGIN
+        self.canvas.create_window(self.MARGIN, 344, anchor="nw", window=ToggleRow(self.root, "Remove shortcuts and startup entry", self.remove_shortcuts_var, width=toggle_width))
+        self.canvas.create_window(self.MARGIN, 400, anchor="nw", window=ToggleRow(self.root, "Also remove private local user data", self.remove_user_data_var, width=toggle_width))
         self._build_progress()
-        self.primary_button = PillButton(self.root, "Uninstall", self._start_uninstall, width=150, height=42, variant="danger")
-        self.secondary_button = PillButton(self.root, "Cancel", self._close, width=128, height=42, variant="ghost")
-        self.canvas.create_window(520, 500, anchor="nw", window=self.secondary_button)
-        self.canvas.create_window(648, 500, anchor="nw", window=self.primary_button)
+        self.primary_button = PillButton(self.root, "Uninstall", self._start_uninstall, width=158, height=44, variant="danger")
+        self.secondary_button = PillButton(self.root, "Cancel", self._close, width=132, height=44, variant="ghost")
+        self.canvas.create_window(right - 158, 548, anchor="nw", window=self.primary_button)
+        self.canvas.create_window(right - 158 - 14 - 132, 548, anchor="nw", window=self.secondary_button)
 
     def _build_progress(self) -> None:
-        self.progress_canvas = tk.Canvas(self.root, width=660, height=28, bg=TRANSPARENT_COLOR, highlightthickness=0)
-        self._canvas_rounded_rect(self.progress_canvas, 2, 7, 658, 21, radius=7, fill="#081517", outline="#245b57", width=1)
-        self.progress_fill = self.progress_canvas.create_rectangle(4, 9, 4, 19, fill="#ffd477", outline="")
-        self.status_id = self.canvas.create_text(64, 476, anchor="w", text="Ready.", fill="#d8fff7", font=("Segoe UI", 9))
-        self.canvas.create_window(64, 458, anchor="nw", window=self.progress_canvas)
+        bar_width = self.width - 2 * self.MARGIN
+        self.progress_canvas = tk.Canvas(self.root, width=bar_width, height=10, bg=TRANSPARENT_COLOR, highlightthickness=0)
+        self._canvas_rounded_rect(self.progress_canvas, 1, 1, bar_width - 1, 9, radius=4, fill="#081517", outline="#245b57", width=1)
+        self.progress_fill = self.progress_canvas.create_rectangle(2, 2, 2, 8, fill="#ffd477", outline="")
+        self.canvas.create_window(self.MARGIN, 508, anchor="nw", window=self.progress_canvas)
+        self.status_id = self.canvas.create_text(self.MARGIN, 528, anchor="w", text="Ready.", fill="#9fc6c0", font=("Segoe UI", 9))
 
     def _canvas_rounded_rect(self, canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int, radius: int, **kwargs: Any) -> int:
         points = [
@@ -995,8 +1006,9 @@ class GlassInstaller:
 
     def _set_progress(self, progress: float, text: str) -> None:
         progress = max(0.0, min(1.0, progress))
-        width = 4 + int(652 * progress)
-        self.progress_canvas.coords(self.progress_fill, 4, 9, width, 19)
+        bar_width = self.width - 2 * self.MARGIN
+        width = 2 + int((bar_width - 4) * progress)
+        self.progress_canvas.coords(self.progress_fill, 2, 2, width, 8)
         color = "#ffd477" if progress < 1 else "#30e3cf"
         self.progress_canvas.itemconfigure(self.progress_fill, fill=color)
         self.canvas.itemconfigure(self.status_id, text=text)

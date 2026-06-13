@@ -85,18 +85,41 @@ def apply_smart_leading_space(text: str, previous_clipboard: str) -> str:
     return text
 
 
+def _type_text(text: str) -> bool:
+    """Type the text key by key. Works in fields that block synthetic Ctrl+V."""
+    try:
+        for line_index, line in enumerate(text.split("\n")):
+            if line_index:
+                pyautogui.press("enter")
+            if line:
+                pyautogui.typewrite(line, interval=0.004)
+        return True
+    except Exception:
+        return False
+
+
 def paste_text(
     text: str,
     *,
     send_enter: bool = False,
     restore_clipboard: bool = False,
     smart_leading_space: bool = False,
+    paste_mode: str = "clipboard",
 ) -> bool:
     if not text and not send_enter:
         return False
     previous = clipboard_text()
     if text and smart_leading_space:
         text = apply_smart_leading_space(text, previous)
+
+    if text and paste_mode == "type":
+        # Simulated typing avoids the clipboard entirely, for apps/fields that
+        # reject programmatic paste. Falls back to clipboard paste if it fails.
+        if _type_text(text):
+            if send_enter:
+                pyautogui.press("enter")
+            return True
+
     if text and not copy_text(text):
         return False
     if text:

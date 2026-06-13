@@ -518,9 +518,10 @@ class Overlay:
         self.settings_header_photos: dict[int, ImageTk.PhotoImage] = {}
         self.visual_photo: ImageTk.PhotoImage | None = None
         self.visual_canvas_item: int | None = None
-        self._resize_snapshot: Image.Image | None = None
-        self._anim_frame_size: tuple[int, int] | None = None
-        self._anim_pill_size: tuple[int, int] | None = None
+        self._open_frames: list[ImageTk.PhotoImage] = []
+        self._open_frames_key: tuple[int, int, int, int] | None = None
+        self._open_anim_active: bool = False
+        self._open_anim_after: str | None = None
         self.flow_loop_strip: Image.Image | None = None
         self.flow_loop_meta: dict[str, int | float] = {}
         self.flow_frame_cache: dict[tuple[int, int], list[Image.Image]] = {}
@@ -572,6 +573,7 @@ class Overlay:
         self.root.after(80, self._post_init)
         self.root.after(220, self.force_visible)
         self.root.after(560, self._warm_visual_caches)
+        self.root.after(700, self._ensure_open_frames)
         self.root.after(480, self._refresh_fullscreen_visibility)
         self.root.after(80, self._animate)
 
@@ -857,101 +859,91 @@ class Overlay:
             pass
 
     def _set_compact(self, compact: bool, *, animate: bool = True) -> None:
-        if self.compact == compact and self.resize_after_id is None:
+        if self.compact == compact and self._open_anim_after is None:
             self._layout_compact()
             self._position()
             return
 
         self.compact = compact
-        if compact:
-            target_width = self.compact_width
-            target_height = self.compact_height
-        else:
-            target_width = self.active_width
-            target_height = self.active_height
-        start_width = self.current_width
-        start_height = self.current_height
-
-        if self.resize_after_id:
-            try:
-                self.root.after_cancel(self.resize_after_id)
-            except Exception:
-                pass
-            self.resize_after_id = None
+        target_width = self.compact_width if compact else self.active_width
+        target_height = self.compact_height if compact else self.active_height
+        self._cancel_open_anim()
 
         if bool(self.config.get("ui", {}).get("reduce_motion", False)):
             animate = False
-        if not animate:
-            self._resize_snapshot = None
-            self._anim_frame_size = None
-            self._anim_pill_size = None
+        frames = self._ensure_open_frames() if animate else None
+        if not frames:
+            self._open_anim_active = False
             self._apply_geometry(target_width, target_height)
             return
 
-        # Animate by scaling the pill graphic inside a window that is held at the
-        # larger of the start/target size. Because the window never changes size
-        # during the animation, there is no newly-exposed area for Windows to fill
-        # with stale pixels (the doubled/ghosted pill), and the graphic scales up
-        # proportionally from the center.
-        self._resize_snapshot = self._compose_pill_image(target_width, target_height, active=not compact)
-        if self._resize_snapshot is None:
-            self._anim_frame_size = None
-            self._apply_geometry(target_width, target_height)
-            return
-        frame_width = max(start_width, target_width)
-        frame_height = max(start_height, target_height)
-        self._anim_frame_size = (frame_width, frame_height)
-        self._anim_pill_size = (start_width, start_height)
-        self._apply_geometry(frame_width, frame_height, draw=False)
-        duration_ms = self._clamp(150.0 + abs(target_width - start_width) * 0.7, 160.0, 300.0)
-        self._animate_resize(
-            start_width, start_height, target_width, target_height, time.perf_counter(), duration_ms / 1000.0
-        )
+        # Play pre-rendered frames (cheap cached-image swaps, no per-frame compute)
+        # inside a window held at the active size. The pill graphic scales from the
+        # center; the window never resizes mid-animation, so there is no stale-pixel
+        # ghosting and the timeline stays smooth regardless of Tk timer jitter.
+        self._open_anim_active = True
+        order = list(range(len(frames))) if not compact else list(range(len(frames) - 1, -1, -1))
+        self._apply_geometry(self.active_width, self.active_height, draw=False)
+        self._play_open_frames(order, 0, target_width, target_height)
 
-    def _animate_resize(
-        self,
-        start_width: int,
-        start_height: int,
-        target_width: int,
-        target_height: int,
-        started_at: float,
-        duration_seconds: float,
-    ) -> None:
-        progress = min(1.0, (time.perf_counter() - started_at) / max(0.01, duration_seconds))
-        eased = 1 - pow(1 - progress, 3)
-        width = int(round(start_width + (target_width - start_width) * eased))
-        height = int(round(start_height + (target_height - start_height) * eased))
-        self._anim_pill_size = (width, height)
-        if progress >= 1.0:
-            self._resize_snapshot = None
-            self._anim_frame_size = None
-            self._anim_pill_size = None
-            self.resize_after_id = None
-            self._apply_geometry(target_width, target_height)
-            return
-        self._blit_centered_snapshot(width, height)
-        self.resize_after_id = self.root.after(
-            10,
-            lambda: self._animate_resize(start_width, start_height, target_width, target_height, started_at, duration_seconds),
-        )
-
-    def _blit_centered_snapshot(self, pill_width: int, pill_height: int) -> None:
-        snapshot = self._resize_snapshot
-        frame = self._anim_frame_size
-        if snapshot is None or frame is None:
-            return
-        frame_width, frame_height = frame
+    def _ensure_open_frames(self) -> list[ImageTk.PhotoImage] | None:
+        key = (self.compact_width, self.compact_height, self.active_width, self.active_height)
+        if self._open_frames_key == key and self._open_frames:
+            return self._open_frames
         try:
-            scaled = snapshot.resize((max(1, pill_width), max(1, pill_height)), Image.Resampling.BILINEAR)
-            if scaled.mode != "RGBA":
-                scaled = scaled.convert("RGBA")
-            canvas_image = Image.new("RGBA", (frame_width, frame_height), (0, 0, 0, 0))
-            offset_x = max(0, (frame_width - scaled.width) // 2)
-            offset_y = max(0, (frame_height - scaled.height) // 2)
-            canvas_image.paste(scaled, (offset_x, offset_y), scaled)
-            self._blit_pill_image(canvas_image)
+            base = self._compose_pill_image(self.active_width, self.active_height, active=True)
+            if base is None:
+                return None
+            if base.mode != "RGBA":
+                base = base.convert("RGBA")
+            frame_width, frame_height = self.active_width, self.active_height
+            steps = 16
+            frames: list[ImageTk.PhotoImage] = []
+            for index in range(steps + 1):
+                t = index / steps
+                eased = 1 - pow(1 - t, 3)
+                width = max(1, round(self.compact_width + (frame_width - self.compact_width) * eased))
+                height = max(1, round(self.compact_height + (frame_height - self.compact_height) * eased))
+                scaled = base.resize((width, height), Image.Resampling.BILINEAR)
+                frame = Image.new("RGBA", (frame_width, frame_height), (0, 0, 0, 0))
+                frame.paste(scaled, (max(0, (frame_width - width) // 2), max(0, (frame_height - height) // 2)), scaled)
+                frames.append(ImageTk.PhotoImage(frame))
+            self._open_frames = frames
+            self._open_frames_key = key
+            return frames
         except Exception:
-            pass
+            return None
+
+    def _play_open_frames(self, order: list[int], pos: int, target_width: int, target_height: int) -> None:
+        if pos >= len(order) or not self._open_frames:
+            self._open_anim_active = False
+            self._open_anim_after = None
+            self._apply_geometry(target_width, target_height)
+            return
+        self._show_open_photo(self._open_frames[order[pos]])
+        self._open_anim_after = self.root.after(
+            16, lambda: self._play_open_frames(order, pos + 1, target_width, target_height)
+        )
+
+    def _show_open_photo(self, photo: ImageTk.PhotoImage) -> None:
+        self.visual_photo = photo
+        if self.visual_canvas_item is None:
+            self.visual_canvas_item = int(self.canvas.create_image(0, 0, image=photo, anchor="nw", tags="visual"))
+            return
+        try:
+            self.canvas.itemconfigure(self.visual_canvas_item, image=photo)
+            self.canvas.coords(self.visual_canvas_item, 0, 0)
+        except tk.TclError:
+            self.visual_canvas_item = int(self.canvas.create_image(0, 0, image=photo, anchor="nw", tags="visual"))
+
+    def _cancel_open_anim(self) -> None:
+        if self._open_anim_after is not None:
+            try:
+                self.root.after_cancel(self._open_anim_after)
+            except Exception:
+                pass
+            self._open_anim_after = None
+        self._open_anim_active = False
 
     def _layout_compact(self) -> None:
         self.canvas.place(x=0, y=0, width=self.current_width, height=self.current_height)
@@ -1316,11 +1308,9 @@ class Overlay:
             pass
 
     def _draw_visual(self) -> None:
-        # During a resize the pill graphic is animated by the resize loop; both the
-        # continuous animation tick and the resize loop render the same centered
-        # snapshot so they never fight over the canvas.
-        if self._resize_snapshot is not None and self._anim_frame_size is not None and self._anim_pill_size is not None:
-            self._blit_centered_snapshot(self._anim_pill_size[0], self._anim_pill_size[1])
+        # While the open/close animation is playing, the frame-playback timer owns the
+        # canvas; the continuous animation tick stands down so they never fight.
+        if self._open_anim_active:
             return
         width = max(1, int(self.current_width))
         height = max(1, int(self.current_height))
@@ -3821,6 +3811,7 @@ class Overlay:
         gain_var = string_var(audio_config.get("gain_boost", 1.0))
         quiet_mode_var = tk.BooleanVar(value=bool(audio_config.get("quiet_mode", False)))
         quiet_boost_var = string_var(audio_config.get("quiet_mode_boost", 3.0))
+        paste_mode_var = tk.StringVar(value=str(dictation_config.get("paste_mode", "clipboard")) or "clipboard")
         wake_config = self.config.setdefault("wake_word", {})
         wake_enabled_var = tk.BooleanVar(value=bool(wake_config.get("enabled", False)))
         wake_model_var = tk.StringVar(value=str(wake_config.get("model", "hey_jarvis")))
@@ -3832,6 +3823,18 @@ class Overlay:
         add_row(audio_tab, 1, "Input gain boost", entry(audio_tab, gain_var, 10))
         check(audio_tab, "Whisper-quiet mode (extra gain for soft speech)", quiet_mode_var, 2)
         add_row(audio_tab, 3, "Quiet mode boost", entry(audio_tab, quiet_boost_var, 10))
+        add_row(
+            audio_tab,
+            9,
+            "Paste method",
+            combo(audio_tab, paste_mode_var, ["clipboard", "type"], 16),
+        )
+        ttk.Label(
+            audio_tab,
+            text="'type' simulates keystrokes for apps that block paste (some terminals, games, secure fields). 'clipboard' is faster.",
+            wraplength=860,
+            style="Flow.Muted.TLabel",
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(2, 0))
         mic_test_var = tk.StringVar(value="")
 
         def test_mic() -> None:
@@ -4045,6 +4048,7 @@ class Overlay:
                 "" if audio_device_var.get().strip() in {"", "(default)"} else audio_device_var.get().split(":")[0].strip()
             )
             audio_config["gain_boost"] = parse_float(gain_var, 1.0, 0.1, 16.0)
+            dictation_config["paste_mode"] = paste_mode_var.get().strip().lower() or "clipboard"
             audio_config["quiet_mode"] = bool(quiet_mode_var.get())
             audio_config["quiet_mode_boost"] = parse_float(quiet_boost_var, 3.0, 1.0, 16.0)
             wake_config["enabled"] = bool(wake_enabled_var.get())
@@ -4586,6 +4590,47 @@ class Overlay:
         ttk.Button(controls, text="Refresh", command=refresh, style="Flow.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
         refresh()
+
+    def open_whats_new(self, previous_version: str, current_version: str, notes: str, url: str) -> None:
+        self.force_visible()
+        window = self._utility_window("whats_new", "Talk Dat! What's New", "560x460", bg="#071113")
+        if window is None:
+            return
+        self._make_glass_titlebar(window, "What's New", "#071113")
+        tk.Label(
+            window,
+            text=f"Updated to v{current_version}",
+            bg="#071113",
+            fg="#f4f6fb",
+            font=("Segoe UI Semibold", 15),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(14, 0))
+        tk.Label(
+            window,
+            text=f"You were on v{previous_version}. Here's what changed.",
+            bg="#071113",
+            fg="#7ee2c3",
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).pack(fill="x", padx=18, pady=(2, 8))
+        body = tk.Frame(window, bg="#071113")
+        body.pack(fill="both", expand=True, padx=18)
+        scrollbar = ttk.Scrollbar(body)
+        scrollbar.pack(side="right", fill="y")
+        text = tk.Text(
+            body, wrap="word", font=("Segoe UI", 10), bg="#102126", fg="#dfe7f2", bd=0, padx=14, pady=12,
+            yscrollcommand=scrollbar.set,
+        )
+        text.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=text.yview)
+        text.insert("1.0", (notes or "").strip() or "See the full release notes on GitHub.")
+        text.configure(state="disabled")
+        controls = tk.Frame(window, bg="#071113")
+        controls.pack(fill="x", padx=18, pady=14)
+        ttk.Button(controls, text="View release", command=lambda: webbrowser.open(url), style="Flow.TButton").pack(
+            side="left"
+        )
+        ttk.Button(controls, text="Close", command=window.destroy, style="Flow.TButton").pack(side="right")
 
     def open_update_window(
         self,

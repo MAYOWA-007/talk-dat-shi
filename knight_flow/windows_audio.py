@@ -4,6 +4,7 @@ import ctypes
 import logging
 import sys
 import threading
+import time
 import uuid
 from ctypes import wintypes
 
@@ -172,39 +173,120 @@ def set_default_output_muted(muted: bool) -> None:
             ctypes.windll.ole32.CoUninitialize()
 
 
+def _get_scalar_volume(volume: ctypes.c_void_p) -> float:
+    level = ctypes.c_float()
+    get_scalar = _method(volume, 9, _HRESULT, ctypes.POINTER(ctypes.c_float))
+    _check(get_scalar(volume, ctypes.byref(level)), "GetMasterVolumeLevelScalar")
+    return float(level.value)
+
+
+def _set_scalar_volume(volume: ctypes.c_void_p, level: float) -> None:
+    level = max(0.0, min(1.0, float(level)))
+    set_scalar = _method(volume, 7, _HRESULT, ctypes.c_float, ctypes.c_void_p)
+    _check(set_scalar(volume, ctypes.c_float(level), None), "SetMasterVolumeLevelScalar")
+
+
+def _get_muted(volume: ctypes.c_void_p) -> bool:
+    muted = wintypes.BOOL()
+    get_mute = _method(volume, 15, _HRESULT, ctypes.POINTER(wintypes.BOOL))
+    _check(get_mute(volume, ctypes.byref(muted)), "GetMute")
+    return bool(muted.value)
+
+
+def _set_muted(volume: ctypes.c_void_p, muted: bool) -> None:
+    set_mute = _method(volume, 14, _HRESULT, wintypes.BOOL, ctypes.c_void_p)
+    _check(set_mute(volume, wintypes.BOOL(1 if muted else 0), None), "SetMute")
+
+
 class OutputMuteGuard:
+    """Fades the default output volume down while recording and back up on release.
+
+    All audio work runs on a background thread so triggering dictation never
+    blocks the UI (the old synchronous COM mute added activation lag). Fades are
+    superseded cleanly when start/stop interleave, and the user's original volume
+    and mute state are always restored.
+    """
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._active = False
-        self._previous_mute: bool | None = None
+        self._generation = 0
+        self._original_volume: float | None = None
+        self._original_mute: bool | None = None
 
-    def start(self, *, enabled: bool = True) -> None:
-        if not enabled:
+    def _is_current(self, generation: int) -> bool:
+        with self._lock:
+            return generation == self._generation
+
+    def start(self, *, enabled: bool = True, fade_ms: int = 180, target: float = 0.0) -> None:
+        if not enabled or sys.platform != "win32":
             return
         with self._lock:
             if self._active:
                 return
-            try:
-                self._previous_mute = get_default_output_muted()
-                set_default_output_muted(True)
-                self._active = True
-                log.info("default output audio muted for dictation")
-            except Exception as exc:
-                self._previous_mute = None
-                self._active = False
-                log.warning("could not mute default output audio: %s", exc)
+            self._active = True
+            self._generation += 1
+            generation = self._generation
+        threading.Thread(
+            target=self._fade, args=(generation, "down", max(1, int(fade_ms)), max(0.0, float(target))),
+            name="TalkDatAudioDuck", daemon=True,
+        ).start()
 
-    def stop(self) -> None:
+    def stop(self, *, fade_ms: int = 240) -> None:
         with self._lock:
             if not self._active:
                 return
-            previous = self._previous_mute
             self._active = False
-            self._previous_mute = None
-        if previous is None:
-            return
+            self._generation += 1
+            generation = self._generation
+        threading.Thread(
+            target=self._fade, args=(generation, "up", max(1, int(fade_ms)), 0.0),
+            name="TalkDatAudioRestore", daemon=True,
+        ).start()
+
+    def _fade(self, generation: int, direction: str, fade_ms: int, target: float) -> None:
+        initialized = _co_initialize()
+        enumerator = device = volume = None
         try:
-            set_default_output_muted(previous)
-            log.info("default output audio mute restored")
+            enumerator, device, volume = _default_endpoint_volume()
+            if direction == "down":
+                with self._lock:
+                    if self._original_volume is None:
+                        self._original_volume = _get_scalar_volume(volume)
+                        self._original_mute = _get_muted(volume)
+                    start_level = _get_scalar_volume(volume)
+                    end_level = target
+                if _get_muted(volume):
+                    _set_muted(volume, False)  # unmute so the fade is audible, restore later
+            else:
+                with self._lock:
+                    original = self._original_volume
+                    original_mute = self._original_mute
+                if original is None:
+                    return
+                start_level = _get_scalar_volume(volume)
+                end_level = original
+
+            steps = max(1, fade_ms // 16)
+            for index in range(1, steps + 1):
+                if not self._is_current(generation):
+                    return
+                level = start_level + (end_level - start_level) * (index / steps)
+                _set_scalar_volume(volume, level)
+                time.sleep(fade_ms / 1000.0 / steps)
+
+            if direction == "up" and self._is_current(generation):
+                with self._lock:
+                    original_mute = self._original_mute
+                    self._original_volume = None
+                    self._original_mute = None
+                if original_mute:
+                    _set_muted(volume, True)
         except Exception as exc:
-            log.warning("could not restore default output audio mute: %s", exc)
+            log.warning("audio duck (%s) failed: %s", direction, exc)
+        finally:
+            _release(volume)
+            _release(device)
+            _release(enumerator)
+            if initialized:
+                ctypes.windll.ole32.CoUninitialize()

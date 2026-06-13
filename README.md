@@ -17,7 +17,9 @@ Cloud providers are bring-your-own-key. The Local / On-Device brand needs no key
 - Panic stop with `Ctrl+Win+Esc`.
 - Animated bottom overlay that is idle until activated.
 - Soft hover glow with a delayed translucent fade when the pill is covering screen content.
-- Optional speaker-output mute while recording, with automatic restore on release/cancel/timeout.
+- Optional speaker-output ducking while recording: background sound fades down on activation and back up on release, with automatic restore on cancel/timeout.
+- Pause/resume dictation and restart from the tray; pick clipboard paste or simulated typing for apps that block paste.
+- One-click in-app updates: when a new version exists the tray shows "Install update", and the update window downloads and launches the installer for you.
 - Fullscreen media/game guard keeps the pill hidden over fullscreen apps. Dictation and pasting keep working while hidden, so push-to-talk never disturbs a game or video; an option can show the pill instead.
 - Fully local on-device dictation: 18 downloadable open-weight models (NVIDIA Parakeet and Canary, Whisper, Distil-Whisper, GigaAM) with an in-app downloader. Parakeet TDT 0.6B v3 is the recommended default, the same pick as Handy.
 - First-run onboarding for provider, model, mode, language, API base, and API key.
@@ -113,20 +115,13 @@ See [docs/PROVIDERS.md](docs/PROVIDERS.md). Current wired adapters include:
 
 Other providers appear in the settings framework for planning and configuration, but still need dedicated adapters before they can transcribe inside the app.
 
-## Public Repo Safety
+## For maintainers
 
-Release assets are built by `.github/workflows/release-windows.yml` when a tag like `v0.1.0` is pushed, or manually from GitHub Actions.
+Releasing and contributing notes live in the docs folder, so the rest of this README stays focused on using the app:
 
-Before publishing or tagging a release:
-
-```powershell
-python .\scripts\prepublish_check.py
-python .\scripts\check_settings_themes.py
-```
-
-Also read [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md). The scanner is a guardrail, not a substitute for reviewing your commit.
-
-When you are ready to create the public repository, follow [docs/GITHUB_PUBLISH.md](docs/GITHUB_PUBLISH.md).
+- Release builds are produced by `.github/workflows/release-windows.yml` when a `vX.Y.Z` tag is pushed (or a `release/vX.Y.Z` branch). It builds the installer and portable ZIP and publishes the GitHub release.
+- Before tagging, run `python .\scripts\prepublish_check.py` and `python .\scripts\check_settings_themes.py`, then follow [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md).
+- Planned features and the roadmap are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Privacy
 
