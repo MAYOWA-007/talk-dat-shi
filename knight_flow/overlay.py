@@ -518,6 +518,7 @@ class Overlay:
         self.settings_header_photos: dict[int, ImageTk.PhotoImage] = {}
         self.visual_photo: ImageTk.PhotoImage | None = None
         self.visual_canvas_item: int | None = None
+        self._resize_snapshot: Image.Image | None = None
         self.flow_loop_strip: Image.Image | None = None
         self.flow_loop_meta: dict[str, int | float] = {}
         self.flow_frame_cache: dict[tuple[int, int], list[Image.Image]] = {}
@@ -760,7 +761,7 @@ class Overlay:
     def _position(self) -> None:
         self._apply_geometry(self.current_width, self.current_height)
 
-    def _apply_geometry(self, width: int, height: int, *, finalize: bool = True) -> None:
+    def _apply_geometry(self, width: int, height: int, *, finalize: bool = True, draw: bool = True) -> None:
         width = max(1, int(round(width)))
         height = max(1, int(round(height)))
         left, top, right, bottom = self._logical_work_area()
@@ -771,7 +772,7 @@ class Overlay:
         elif position == "bottom-right":
             x = right - width - 24
         else:
-            x = left + int((screen_w - width) / 2)
+            x = left + int(round((screen_w - width) / 2))
         if position == "top-center":
             y = top + self.bottom_margin
         else:
@@ -785,12 +786,45 @@ class Overlay:
             if finalize:
                 self.root.minsize(width, height)
                 self.root.update_idletasks()
-            self._apply_pill_region(width, height, redraw=finalize)
+            self._apply_pill_region(width, height, redraw=True)
             self._last_geometry = geometry
-        self._draw_visual()
+        if draw:
+            self._draw_visual()
 
     def _apply_pill_region(self, width: int, height: int, *, redraw: bool = True) -> None:
         self._apply_window_region(self.root, width, height, max(1, height // 2), redraw=redraw)
+
+    def _compose_pill_image(self, width: int, height: int, active: bool) -> Image.Image | None:
+        """Render a single pill frame to a PIL image (no canvas blit). Used to take a
+        snapshot the resize animation can cheaply scale, so the open glides instead of
+        re-rendering the wave field at every intermediate size."""
+        try:
+            body_width = min(width, self.active_pill_width) if active else width
+            body_height = min(height, self.active_pill_height) if active else height
+            field = self._compact_wave_frame(body_width, body_height, active=active) or self._compact_reference_fallback(
+                body_width, body_height
+            )
+            field = self._finish_compact_wave_frame(field, body_width, body_height, active=active)
+            if active and (width != body_width or height != body_height):
+                field = self._compose_active_visual(field, width, height, body_width, body_height)
+            return field
+        except Exception:
+            return None
+
+    def _blit_pill_image(self, image: Image.Image) -> None:
+        self.visual_photo = ImageTk.PhotoImage(image)
+        if self.visual_canvas_item is None:
+            self.visual_canvas_item = int(
+                self.canvas.create_image(0, 0, image=self.visual_photo, anchor="nw", tags="visual")
+            )
+            return
+        try:
+            self.canvas.itemconfigure(self.visual_canvas_item, image=self.visual_photo)
+            self.canvas.coords(self.visual_canvas_item, 0, 0)
+        except tk.TclError:
+            self.visual_canvas_item = int(
+                self.canvas.create_image(0, 0, image=self.visual_photo, anchor="nw", tags="visual")
+            )
 
     def _apply_window_region(
         self, window: tk.Tk | tk.Toplevel, width: int, height: int, radius: int, *, redraw: bool = True
@@ -849,11 +883,12 @@ class Overlay:
             self._apply_geometry(target_width, target_height)
             return
 
-        steps = int(self._clamp(self.config.get("overlay", {}).get("resize_steps", 12), 6, 24))
-        # Time-based animation: Windows Tk timers fire at ~15.6 ms granularity, so
-        # progress is driven by real elapsed time, not step counts. Late frames skip
-        # ahead instead of stretching the animation, which is what caused the chop.
-        duration_ms = self._clamp(self.resize_frame_ms * steps * 2.2, 150.0, 600.0)
+        # Snapshot the destination appearance once, then scale that single bitmap to
+        # each intermediate size. This makes the pill zoom proportionally from its
+        # center instead of re-rendering the wave field every frame (the old chop),
+        # and keeps the window centered the whole way.
+        self._resize_snapshot = self._compose_pill_image(target_width, target_height, active=not compact)
+        duration_ms = self._clamp(180.0 + abs(target_width - self.current_width) * 0.6, 170.0, 320.0)
         self._animate_resize(
             self.current_width,
             self.current_height,
@@ -877,12 +912,22 @@ class Overlay:
         width = int(round(start_width + (target_width - start_width) * eased))
         height = int(round(start_height + (target_height - start_height) * eased))
         if progress >= 1.0:
+            self._resize_snapshot = None
             self._apply_geometry(target_width, target_height)
             self.resize_after_id = None
             return
-        self._apply_geometry(width, height, finalize=False)
+        # Move/resize the window (centered) without the expensive live re-render,
+        # then blit a cheap scaled copy of the destination snapshot.
+        self._apply_geometry(width, height, finalize=False, draw=self._resize_snapshot is None)
+        snapshot = self._resize_snapshot
+        if snapshot is not None:
+            try:
+                scaled = snapshot.resize((max(1, width), max(1, height)), Image.Resampling.BILINEAR)
+                self._blit_pill_image(scaled)
+            except Exception:
+                self._draw_visual()
         self.resize_after_id = self.root.after(
-            8,
+            10,
             lambda: self._animate_resize(start_width, start_height, target_width, target_height, started_at, duration_seconds),
         )
 
@@ -3696,33 +3741,52 @@ class Overlay:
         llm_key_var = tk.StringVar(value=str(llm.get("api_key", "")))
         llm_base_var = tk.StringVar(value=str(llm.get("api_base", "")))
         translate_to_var = tk.StringVar(value=str(transforms.get("translate_to", "English")))
-        custom_text = text_box(transforms_tab, 9)
+        smart_format_var = tk.BooleanVar(value=bool(cleanup.get("smart_format", True)))
+        format_mode_var = tk.StringVar(value=str(cleanup.get("format_mode", "auto")) or "auto")
+        custom_text = text_box(transforms_tab, 8)
         custom_text.insert("1.0", json.dumps(transforms.get("custom", []), indent=2, ensure_ascii=False))
-        check(transforms_tab, "Enable transforms", transforms_enabled_var, 0)
+        check(transforms_tab, "Smart formatting: reformat every dictation (Wispr-style)", smart_format_var, 0)
         add_row(
             transforms_tab,
             1,
-            "AI rewrite provider",
-            combo(transforms_tab, llm_provider_var, ["none", "openai", "anthropic", "gemini", "groq", "custom"], 20),
+            "Formatting engine",
+            combo(transforms_tab, format_mode_var, ["auto", "ai", "heuristic", "off"], 16),
         )
-        add_row(transforms_tab, 2, "AI model (blank = default)", entry(transforms_tab, llm_model_var, 36))
-        add_row(transforms_tab, 3, "AI API key", entry(transforms_tab, llm_key_var, 56, show="*"))
-        add_row(transforms_tab, 4, "AI API base (optional)", entry(transforms_tab, llm_base_var, 56))
-        add_row(transforms_tab, 5, "Translate to", entry(transforms_tab, translate_to_var, 24))
         ttk.Label(
             transforms_tab,
-            text="The AI provider powers Polish, tone presets, Translate, and per-app tones. Keys can also come from environment variables.",
+            text=(
+                "Smart formatting fixes punctuation (including question marks), capitalization, and adds "
+                "bullets/numbered lists from the logic of what you said. 'auto' uses your AI provider when set, "
+                "otherwise a built-in formatter that works with any model offline."
+            ),
             wraplength=860,
             style="Flow.Muted.TLabel",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 6))
-        check(transforms_tab, "Use Ollama for rewrites (fallback)", ollama_enabled_var, 7)
-        add_row(transforms_tab, 8, "Ollama URL", entry(transforms_tab, ollama_url_var, 70))
-        add_row(transforms_tab, 9, "Ollama model", entry(transforms_tab, ollama_model_var, 30))
-        ttk.Label(transforms_tab, text="Custom transforms JSON", style="Flow.TLabel").grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        check(transforms_tab, "Enable transforms (polish, tone, list)", transforms_enabled_var, 3)
+        add_row(
+            transforms_tab,
+            4,
+            "AI rewrite provider",
+            combo(transforms_tab, llm_provider_var, ["none", "openai", "anthropic", "gemini", "groq", "ollama", "custom"], 20),
         )
-        custom_text.grid(row=11, column=0, columnspan=2, sticky="nsew")
-        transforms_tab.rowconfigure(11, weight=1)
+        add_row(transforms_tab, 5, "AI model (blank = default)", entry(transforms_tab, llm_model_var, 36))
+        add_row(transforms_tab, 6, "AI API key", entry(transforms_tab, llm_key_var, 56, show="*"))
+        add_row(transforms_tab, 7, "AI API base (optional)", entry(transforms_tab, llm_base_var, 56))
+        add_row(transforms_tab, 8, "Translate to", entry(transforms_tab, translate_to_var, 24))
+        ttk.Label(
+            transforms_tab,
+            text="The AI provider powers smart formatting, polish, tone presets, translate, and per-app tones. Keys can also come from environment variables.",
+            wraplength=860,
+            style="Flow.Muted.TLabel",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        check(transforms_tab, "Use Ollama for rewrites (legacy fallback)", ollama_enabled_var, 10)
+        add_row(transforms_tab, 11, "Ollama URL", entry(transforms_tab, ollama_url_var, 70))
+        add_row(transforms_tab, 12, "Ollama model", entry(transforms_tab, ollama_model_var, 30))
+        ttk.Label(transforms_tab, text="Custom transforms JSON", style="Flow.TLabel").grid(
+            row=13, column=0, columnspan=2, sticky="w", pady=(12, 4)
+        )
+        custom_text.grid(row=14, column=0, columnspan=2, sticky="nsew")
+        transforms_tab.rowconfigure(14, weight=1)
 
         audio_config = self.config.setdefault("audio", {})
         audio_device_var = tk.StringVar(value=str(audio_config.get("input_device", "")))
@@ -3942,6 +4006,8 @@ class Overlay:
 
             cleanup["level"] = level_var.get().strip().lower() or "high"
             cleanup["censor_profanity"] = bool(censor_var.get())
+            cleanup["smart_format"] = bool(smart_format_var.get())
+            cleanup["format_mode"] = format_mode_var.get().strip().lower() or "auto"
             privacy["save_history"] = bool(save_history_var.get())
             privacy["history_limit"] = parse_int(history_limit_var, 0, 0, 100000)
             privacy["redact_pii"] = bool(redact_pii_var.get())

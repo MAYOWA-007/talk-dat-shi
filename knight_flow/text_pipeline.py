@@ -239,6 +239,19 @@ def cleanup_text(text: str, config: dict[str, Any]) -> str:
     return normalize_spaces(text)
 
 
+def pre_clean_for_format(text: str, config: dict[str, Any]) -> str:
+    """Deterministic content cleanup (voice edits, fillers, corrections) that runs
+    before the formatting layer owns punctuation and structure."""
+    cleanup = config.get("cleanup", {})
+    if cleanup.get("backtrack", True):
+        text = apply_backtrack(text)
+    if cleanup.get("remove_fillers", True):
+        text = FILLER_RE.sub("", text)
+    for pattern, replacement in COMMON_CORRECTIONS:
+        text = pattern.sub(replacement, text)
+    return normalize_spaces(text)
+
+
 def process_dictation(raw: str, config: dict[str, Any]) -> ProcessedText:
     original = normalize_spaces(raw)
     text = original
@@ -249,7 +262,19 @@ def process_dictation(raw: str, config: dict[str, Any]) -> ProcessedText:
 
     text = apply_snippets(text, config)
     text = apply_dictionary(text, config)
-    text = cleanup_text(text, config)
+
+    cleanup = config.get("cleanup", {})
+    if cleanup.get("smart_format", True) and str(cleanup.get("level", "")).lower() != "none":
+        # Wispr-style formatting layer: punctuation (incl. question marks),
+        # capitalization, and structure inferred from what was said. Model-agnostic;
+        # uses the configured LLM when available, else a strong heuristic fallback.
+        from .formatting import smart_format
+
+        text = pre_clean_for_format(text, config)
+        text = smart_format(text, config)
+    else:
+        text = cleanup_text(text, config)
+
     text = redact_sensitive(text, config)
     for text_filter in plugin_text_filters(config):
         try:

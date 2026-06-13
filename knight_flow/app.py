@@ -406,7 +406,7 @@ class TalkDatApp:
             self.handle_dictation(raw_text)
 
     def handle_dictation(self, raw_text: str) -> None:
-        self.overlay.set_state("processing", "Cleaning up transcript.", preview(raw_text, 112))
+        self.overlay.set_state("processing", "Formatting transcript.", preview(raw_text, 112))
         profile = active_profile(self.config)
         effective_config = apply_profile(self.config, profile)
         processed = process_dictation(raw_text, effective_config)

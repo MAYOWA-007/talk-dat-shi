@@ -90,6 +90,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "backtrack": True,
         "smart_newlines": True,
         "censor_profanity": False,
+        "smart_format": True,
+        "format_mode": "auto",
     },
     "audio": {
         "input_device": "",
@@ -151,8 +153,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "active_pill_height": 58,
         "active_width": 320,
         "active_height": 58,
-        "compact_width": 110,
-        "compact_height": 38,
+        "compact_width": 188,
+        "compact_height": 44,
         "wave_loop_start": 0,
         "wave_loop_end": 50,
         "active_frame_ms": 12,
@@ -346,6 +348,16 @@ def normalize_shortcuts(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _migrate_overlay_sizes(config: dict[str, Any], loaded: dict[str, Any]) -> None:
+    """Bump the compact pill size for users still on the previous defaults, without
+    touching configs where the size was customized."""
+    overlay = config.setdefault("overlay", {})
+    loaded_overlay = loaded.get("overlay", {}) if isinstance(loaded.get("overlay"), dict) else {}
+    if int(loaded_overlay.get("compact_width", 110)) == 110 and int(loaded_overlay.get("compact_height", 38)) == 38:
+        overlay["compact_width"] = 188
+        overlay["compact_height"] = 44
+
+
 def load_config(project_root: Path | None = None) -> dict[str, Any]:
     load_project_env(project_root)
     path = config_path()
@@ -358,6 +370,7 @@ def load_config(project_root: Path | None = None) -> dict[str, Any]:
         loaded = {}
 
     config = normalize_shortcuts(deep_merge(DEFAULT_CONFIG, loaded if isinstance(loaded, dict) else {}))
+    _migrate_overlay_sizes(config, loaded if isinstance(loaded, dict) else {})
     env_key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
     if env_key and not str(config.get("deepgram", {}).get("api_key", "")).strip():
         config["deepgram"]["api_key"] = env_key

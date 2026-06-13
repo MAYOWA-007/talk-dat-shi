@@ -1,4 +1,4 @@
-"""BYOK LLM rewrite backend for transforms.
+"""BYOK LLM rewrite backend for transforms and dictation formatting.
 
 Providers share one config shape under transforms.llm:
 {"provider": "none|ollama|openai|anthropic|gemini|groq|custom",
@@ -26,10 +26,11 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "env_key": "GEMINI_API_KEY",
     },
     "groq": {"api_base": "https://api.groq.com/openai", "model": "llama-3.3-70b-versatile", "env_key": "GROQ_API_KEY"},
+    "ollama": {"api_base": "http://localhost:11434", "model": "llama3.1", "env_key": ""},
     "custom": {"api_base": "", "model": "", "env_key": "CUSTOM_LLM_API_KEY"},
 }
 
-SYSTEM_PROMPT = (
+REWRITE_SYSTEM_PROMPT = (
     "You rewrite dictated text. Follow the instruction exactly. "
     "Return only the rewritten text with no preamble, labels, or quotes."
 )
@@ -38,6 +39,18 @@ SYSTEM_PROMPT = (
 def llm_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = config.get("transforms", {}).get("llm", {})
     return settings if isinstance(settings, dict) else {}
+
+
+def llm_configured(config: dict[str, Any]) -> bool:
+    """True when a usable AI rewrite backend is configured."""
+    settings = llm_settings(config)
+    provider = str(settings.get("provider", "none")).strip().lower()
+    if provider in {"", "none"}:
+        return False
+    if provider == "ollama":
+        return True  # local, no key needed
+    return bool(_api_key(settings, provider))
+
 
 def _api_key(settings: dict[str, Any], provider: str) -> str:
     key = str(settings.get("api_key", "")).strip()
@@ -58,36 +71,31 @@ def _post_json(url: str, body: dict[str, Any], headers: dict[str, str], timeout:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _rewrite_openai_compatible(
-    text: str, instruction: str, *, api_base: str, api_key: str, model: str, timeout: float
-) -> str:
+def _complete_openai(system: str, user: str, *, api_base: str, api_key: str, model: str, timeout: float) -> str:
     payload = _post_json(
         api_base.rstrip("/") + "/v1/chat/completions",
         {
             "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"},
-            ],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0.2,
         },
         {"Authorization": f"Bearer {api_key}"},
         timeout,
     )
     choices = payload.get("choices", [])
     if choices and isinstance(choices[0], dict):
-        message = choices[0].get("message", {})
-        return str(message.get("content", "")).strip()
+        return str(choices[0].get("message", {}).get("content", "")).strip()
     return ""
 
 
-def _rewrite_anthropic(text: str, instruction: str, *, api_base: str, api_key: str, model: str, timeout: float) -> str:
+def _complete_anthropic(system: str, user: str, *, api_base: str, api_key: str, model: str, timeout: float) -> str:
     payload = _post_json(
         api_base.rstrip("/") + "/v1/messages",
         {
             "model": model,
             "max_tokens": 2048,
-            "system": SYSTEM_PROMPT,
-            "messages": [{"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"}],
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
         },
         {"x-api-key": api_key, "anthropic-version": "2023-06-01"},
         timeout,
@@ -97,19 +105,18 @@ def _rewrite_anthropic(text: str, instruction: str, *, api_base: str, api_key: s
     return "\n".join(parts).strip()
 
 
-def _rewrite_gemini(text: str, instruction: str, *, api_base: str, api_key: str, model: str, timeout: float) -> str:
+def _complete_gemini(system: str, user: str, *, api_base: str, api_key: str, model: str, timeout: float) -> str:
     payload = _post_json(
         f"{api_base.rstrip('/')}/v1beta/models/{model}:generateContent?key={api_key}",
         {
-            "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "contents": [{"role": "user", "parts": [{"text": f"Instruction: {instruction}\n\nText:\n{text}"}]}],
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
         },
         {},
         timeout,
     )
-    candidates = payload.get("candidates", [])
     texts: list[str] = []
-    for candidate in candidates:
+    for candidate in payload.get("candidates", []):
         parts = candidate.get("content", {}).get("parts", []) if isinstance(candidate, dict) else []
         for part in parts:
             if isinstance(part, dict) and isinstance(part.get("text"), str):
@@ -117,10 +124,28 @@ def _rewrite_gemini(text: str, instruction: str, *, api_base: str, api_key: str,
     return "\n".join(texts).strip()
 
 
-def llm_rewrite(text: str, instruction: str, config: dict[str, Any]) -> str | None:
+def _complete_ollama(system: str, user: str, *, api_base: str, model: str, timeout: float) -> str:
+    payload = _post_json(
+        api_base.rstrip("/") + "/api/chat",
+        {
+            "model": model,
+            "stream": False,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        },
+        {},
+        timeout,
+    )
+    message = payload.get("message", {})
+    if isinstance(message, dict):
+        return str(message.get("content", "")).strip()
+    return ""
+
+
+def llm_complete(system: str, user: str, config: dict[str, Any]) -> str | None:
+    """Low-level model-agnostic completion. Returns None when unavailable or on error."""
     settings = llm_settings(config)
     provider = str(settings.get("provider", "none")).strip().lower()
-    if provider in {"", "none", "ollama"}:
+    if provider in {"", "none"}:
         return None
     defaults = PROVIDER_DEFAULTS.get(provider)
     if defaults is None:
@@ -129,19 +154,23 @@ def llm_rewrite(text: str, instruction: str, config: dict[str, Any]) -> str | No
     api_base = str(settings.get("api_base", "")).strip() or defaults["api_base"]
     model = str(settings.get("model", "")).strip() or defaults["model"]
     timeout = float(settings.get("timeout", 30))
-    if not api_key or not api_base or not model:
+    if provider != "ollama" and not api_key:
+        return None
+    if not api_base or not model:
         return None
     try:
         if provider == "anthropic":
-            output = _rewrite_anthropic(
-                text, instruction, api_base=api_base, api_key=api_key, model=model, timeout=timeout
-            )
+            output = _complete_anthropic(system, user, api_base=api_base, api_key=api_key, model=model, timeout=timeout)
         elif provider == "gemini":
-            output = _rewrite_gemini(text, instruction, api_base=api_base, api_key=api_key, model=model, timeout=timeout)
+            output = _complete_gemini(system, user, api_base=api_base, api_key=api_key, model=model, timeout=timeout)
+        elif provider == "ollama":
+            output = _complete_ollama(system, user, api_base=api_base, model=model, timeout=timeout)
         else:
-            output = _rewrite_openai_compatible(
-                text, instruction, api_base=api_base, api_key=api_key, model=model, timeout=timeout
-            )
+            output = _complete_openai(system, user, api_base=api_base, api_key=api_key, model=model, timeout=timeout)
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, KeyError, ValueError):
         return None
     return output or None
+
+
+def llm_rewrite(text: str, instruction: str, config: dict[str, Any]) -> str | None:
+    return llm_complete(REWRITE_SYSTEM_PROMPT, f"Instruction: {instruction}\n\nText:\n{text}", config)

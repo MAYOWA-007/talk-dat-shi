@@ -26,7 +26,8 @@ Cloud providers are bring-your-own-key. The Local / On-Device brand needs no key
 - Version tracking plus GitHub Release update checks and installer download from inside the app.
 - Local transcript history and live draft files, with a choice of plain JSONL or a local searchable SQLite database.
 - Smart leading space, snippets with `{date}`/`{time}`/`{clipboard}` variables, custom dictionary words, replacements, and cleanup transforms.
-- AI rewrites with your own key: OpenAI, Anthropic, Gemini, Groq, or local Ollama power Polish, tone presets (formal, friendly, concise), and Translate.
+- Smart formatting (Wispr-style): every dictation is reformatted into clean written text with correct punctuation (including question marks), capitalization, and bullets/numbered lists inferred from what you said. Runs after any STT model; uses your AI provider when configured, else a built-in offline formatter.
+- AI rewrites with your own key: OpenAI, Anthropic, Gemini, Groq, or local Ollama power smart formatting, Polish, tone presets (formal, friendly, concise), and Translate.
 - Per-app profiles: match a process name (for example `slack`) to its own cleanup level, tone, language, and auto-enter behavior.
 - Voice editing commands ("scratch that", "delete last word", "new line"), optional PII redaction and profanity censoring.
 - History search, pinned transcripts, Markdown/text/SRT export, and a local Stats window (words, streaks, estimated time saved).
